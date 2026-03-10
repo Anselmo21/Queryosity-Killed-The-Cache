@@ -1,8 +1,12 @@
-# Installing TPC-H Benchmarks
+# "Queryosity Killed The Cache" Query Scheduler
+
+This repository contains the code and workloads used for the EECS 6414 (W2026) course project.
+
+# System Prerequisites 
 
 ## 1. Install Docker
 
-Install Docker on your local machine.
+Docker is required to run the PostgreSQL database used by this project. 
 
 Verify the installation:
 
@@ -11,9 +15,31 @@ docker --version
 docker compose version
 ```
 
----
+## 2. Launching PostgreSQL
 
-## 2. Clone the TPC-H Generator
+Start the PG container from the repository root
+
+```bash 
+docker compose up -d 
+```
+
+Verify the container is running 
+
+```bash 
+docker ps 
+```
+
+If working properly, the expected container name will be **query_scheduler_pg** 
+
+
+# Installing Benchmarks
+
+**NOTE**: The instruction steps below were originally tested and conducted on the RHEL distribution. Some quirks may occur on other operating systems.
+There shouldn't be any need to modify the parameters of the scripts involved unless you want a different name for the output directory.
+
+## TPC-H
+
+### 1. Clone the TPC-H Generator
 
 Clone the TPC-H data generator:
 
@@ -31,11 +57,10 @@ make
 Follow the instructions in the repository. 
 The default configuration works for PostgreSQL.
 
----
 
-## 3. Generate the Benchmark Data
+### 2. Generate the Benchmark Data
 
-Generate data with **Scale Factor 10**:
+Generate data with **Scale Factor 10** (or whichever you'd like):
 
 ```bash
 ./dbgen -s 10
@@ -81,9 +106,7 @@ project-root/
     lineitem.tbl
 ```
 
----
-
-## 4. Generate TPC-H Benchmark Queries
+### 3. Generate TPC-H Benchmark Queries
 
 The TPC-H toolkit also provides a query generator.
 
@@ -95,6 +118,8 @@ cd tpch-kit/dbgen
 
 Generate all 22 benchmark queries:
 
+**Note**: The queries are already stored in this repository under `workloads/tpch`. But, if you are interested to generate, with perhaps different parameters, the following below will work. 
+
 ```bash
 for i in {1..22}
 do
@@ -102,43 +127,23 @@ do
 done
 ```
 
-## 5. Start PostgreSQL with Docker
+### 4. Start PostgreSQL with Docker
 
-From the repository root:
+See instructions above
 
-```bash
-docker compose up -d
-```
-
-Verify the container is running:
-
-```bash
-docker ps
-```
-
-Expected container name:
-
-```
-query_scheduler_pg
-```
-
----
-
-## 6. Navigate to Setup Scripts
+### 5. Navigate to Setup Scripts
 
 ```bash
 cd tpch_scripts
 ```
 
-Make the scripts executable:
+Make the scripts executable (if needed):
 
 ```bash
 chmod +x *.sh
 ```
 
----
-
-## 7. Configure Environment Variables
+### 6. Configure Environment Variables
 
 These variables tell the scripts where the container and dataset are located.
 
@@ -149,9 +154,7 @@ export DB_NAME=tpch
 export DATA_DIR=../../tpch-data-sf10
 ```
 
----
-
-## 8. Run the Setup Script
+### 7. Run the Setup Script
 
 Run the full database initialization:
 
@@ -181,9 +184,8 @@ This will:
 4. Apply primary keys
 5. Apply foreign keys
 
----
 
-## 9. Verify the Installation
+### 8. Verify the Installation
 
 Connect to PostgreSQL:
 
@@ -221,3 +223,42 @@ For **SF10**, the result should be approximately:
 ```
 ~60,000,000 rows
 ```
+
+## TPC-DS
+
+### 1. Generate Data
+
+Navigate to the `tpcds_scripts` directory.
+
+If you are using **Linux**, the required executables are already included in the folder. Otherwise, clone the TPC-DS toolkit and build the generator for your system. 
+
+```bash
+git clone https://github.com/gregrahn/tpcds-kit
+cd tpcds-kit/tools
+make
+```
+
+Follow the instructions in the repository to compile the executables for your platform.
+
+Data generation can be performed using the run_dsdgen_parallel.sh script. This script can spawn multiple children to speed up generation. Specify the desired scale factor and the output directory for the generated .dat files.
+
+For consistency with the setup scripts, ensure your directory structure looks like this:
+
+```
+project-root/
+│
+├── this-repository/
+│
+└── tpcds-data-sf10/
+```
+
+### 2. Run the Setup Script 
+
+Execute the TPC-DS setup script
+
+```bash
+./setup_tpcds.sh 
+```
+
+This will perform the same steps as the TPC-H setup. 
+
