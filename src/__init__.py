@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 from typing import Any
-
 from psycopg import Connection
 
 
@@ -38,19 +36,25 @@ def execute_query(
 
             if fetch_results:
                 if cursor.description is None:
+                    connection.commit()
                     return []
-                return cursor.fetchall()
 
+                rows = cursor.fetchall()
+                connection.commit()
+                return rows
+
+            connection.commit()
             return None
 
     except Exception as exc:
+        connection.rollback()
         raise RuntimeError("Failed to execute SQL statement.") from exc
 
 
 def get_execution_plan(
     query: str,
     connection: Connection,
-    analyze: bool,
+    execute_plan: bool,
 ) -> dict[str, Any]:
     """
     Retrieve the PostgreSQL execution plan for a SQL query.
@@ -61,14 +65,14 @@ def get_execution_plan(
         SQL query to explain.
     connection : Connection
         Active PostgreSQL connection.
-    analyze : bool
-        Whether to execute the query while generating the plan.
+    execute_plan : bool
+        Whether the query should be executed while generating the plan.
         If True, EXPLAIN ANALYZE is used. Otherwise EXPLAIN is used.
 
     Returns
     -------
     dict[str, Any]
-        Full PostgreSQL execution plan document.
+        PostgreSQL execution plan in JSON form.
 
     Raises
     ------
@@ -77,7 +81,7 @@ def get_execution_plan(
     """
     explain_sql = (
         f"EXPLAIN (ANALYZE, FORMAT JSON) {query}"
-        if analyze
+        if execute_plan
         else f"EXPLAIN (FORMAT JSON) {query}"
     )
 
