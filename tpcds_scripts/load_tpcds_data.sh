@@ -34,20 +34,31 @@ TABLES=(
   web_site
 )
 
-echo "Using data directory: ${DATA_DIR}"
+get_table_files() {
+  local table="$1"
+  local matches=()
+  local f
 
-for table in "${TABLES[@]}"; do
-  files=( "${DATA_DIR}/${table}"*.dat )
-  found=0
+  f="${DATA_DIR}/${table}.dat"
+  if [ -f "$f" ]; then
+    matches+=( "$f" )
+  fi
 
-  for f in "${files[@]}"; do
+  for f in "${DATA_DIR}/${table}"_[0-9]*_[0-9]*.dat; do
     if [ -f "$f" ]; then
-      found=1
-      break
+      matches+=( "$f" )
     fi
   done
 
-  if [ "$found" -eq 0 ]; then
+  printf '%s\n' "${matches[@]}"
+}
+
+echo "Using data directory: ${DATA_DIR}"
+
+for table in "${TABLES[@]}"; do
+  mapfile -t table_files < <(get_table_files "$table")
+
+  if [ "${#table_files[@]}" -eq 0 ]; then
     echo "Missing data files for table: ${table}"
     exit 1
   fi
@@ -57,27 +68,24 @@ echo "Loading TPC-DS tables..."
 for table in "${TABLES[@]}"; do
   echo "Loading ${table}..."
 
-  files=( "${DATA_DIR}/${table}"*.dat )
-  valid_files=()
-
-  for f in "${files[@]}"; do
-    if [ -f "$f" ]; then
-      valid_files+=( "$f" )
-    fi
-  done
+  mapfile -t valid_files < <(get_table_files "$table")
 
   if [ "${#valid_files[@]}" -eq 0 ]; then
     echo "No data files for ${table}"
     continue
   fi
 
-  cat "${valid_files[@]}" | sed 's/|$//' | docker exec -i "$CONTAINER_NAME" \
-    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME" \
-    -c "\copy ${table} FROM STDIN WITH (FORMAT csv, DELIMITER '|');"
+  for f in "${valid_files[@]}"; do
+    echo "  -> Loading file: $(basename "$f")"
+
+    sed 's/|$//' "$f" | docker exec -i "$CONTAINER_NAME" \
+      psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME" \
+      -c "\copy ${table} FROM STDIN WITH (FORMAT text, DELIMITER '|', NULL '');"
+  done
 done
 
 echo "Applying keys from '${KEYS_SQL}'..."
-cat "$KEYS_SQL" | docker exec -i "$CONTAINER_NAME" \
-  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME"
+docker exec -i "$CONTAINER_NAME" \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME" < "$KEYS_SQL"
 
 echo "TPC-DS data load complete."

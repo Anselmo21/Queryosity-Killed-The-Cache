@@ -2,7 +2,7 @@
 # TPC-DS data generation script for 100 GB scale, 12 parallel children
 # Adjust SCALE, PARALLEL, and OUTPUT_DIR as needed.
 
-OUTPUT_DIR=~/benchmarks/tpcds-data-sf10
+OUTPUT_DIR=../../../tpcds-data-sf10
 SCALE=10
 PARALLEL=12
 
