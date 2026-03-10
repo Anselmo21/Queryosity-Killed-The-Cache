@@ -31,6 +31,40 @@ docker ps
 
 If working properly, the expected container name will be **query_scheduler_pg** 
 
+## 3. Install Libraries 
+
+The list of packages required by the system is found within `requirements.txt`.
+
+To use this, first create and activate a virtual environment
+
+```bash 
+python -m venv venv
+source venv/bin/activate
+```
+
+Once inside the virtual environment, install the libraries as follow
+
+```bash 
+pip install -r requirements.txt
+```
+
+### Adding Dependencies
+
+When there is a need to add new libraries, please follow these steps for consistency purposes.
+
+1. Activate your virtual environment 
+2. Install the packages you need 
+
+```bash 
+pip install psycopg[binary] pandas networkx
+```
+3. Update the dependency list (or alternatively you can just overwrite the text file directly)
+
+```bash 
+pip freeze > requirements.txt
+```
+
+4. Commit the updated requirements.txt
 
 # Installing Benchmarks
 
