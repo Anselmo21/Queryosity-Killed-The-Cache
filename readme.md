@@ -83,7 +83,26 @@ project-root/
 
 ---
 
-# 4. Start PostgreSQL with Docker
+## 4. Generate TPC-H Benchmark Queries
+
+The TPC-H toolkit also provides a query generator.
+
+Navigate to the generator directory:
+
+```bash
+cd tpch-kit/dbgen
+```
+
+Generate all 22 benchmark queries:
+
+```bash
+for i in {1..22}
+do
+    ./qgen $i > query$i.sql
+done
+```
+
+## 5. Start PostgreSQL with Docker
 
 From the repository root:
 
@@ -105,7 +124,7 @@ query_scheduler_pg
 
 ---
 
-# 5. Navigate to Setup Scripts
+## 6. Navigate to Setup Scripts
 
 ```bash
 cd tpch_scripts
@@ -119,7 +138,7 @@ chmod +x *.sh
 
 ---
 
-# 6. Configure Environment Variables
+## 7. Configure Environment Variables
 
 These variables tell the scripts where the container and dataset are located.
 
@@ -132,7 +151,7 @@ export DATA_DIR=../../tpch-data-sf10
 
 ---
 
-# 7. Run the Setup Script
+## 8. Run the Setup Script
 
 Run the full database initialization:
 
@@ -164,7 +183,7 @@ This will:
 
 ---
 
-# 8. Verify the Installation
+## 9. Verify the Installation
 
 Connect to PostgreSQL:
 
