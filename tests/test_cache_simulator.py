@@ -1,5 +1,5 @@
-from src.scheduler.access_profile import AccessProfile
-from src.scheduler.cache_simulator import LRUCache, SimulationResult, simulate_schedule
+from src.simulator.access_profile import AccessProfile
+from src.simulator.cache_simulator import LRUCache, SimulationResult, simulate_schedule
 
 
 class TestLRUCache:

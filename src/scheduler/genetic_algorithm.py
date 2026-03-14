@@ -1,17 +1,26 @@
+"""
+Genetic algorithm-based query scheduler.
+
+Uses tournament selection, order crossover (OX), swap mutation, and
+elitism to evolve a population of query permutations that maximise
+the simulated LRU cache hit ratio.
+"""
+
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
-from src.scheduler.access_profile import AccessProfile
-from src.scheduler.cache_simulator import SimulationResult, simulate_schedule
+from src.scheduler.base_scheduler import ScheduleResult, SchedulerBase
+from src.simulator.access_profile import AccessProfile
+from src.simulator.cache_simulator import SimulationResult, simulate_schedule
 
 
 @dataclass
 class GAConfig:
     """
-    Configuration for the genetic algorithm.
+    Configuration for the genetic algorithm scheduler.
 
     Attributes
     ----------
@@ -28,7 +37,7 @@ class GAConfig:
     elite_count : int
         Number of top individuals preserved unchanged across generations.
     cache_capacity_pages : int
-        LRU cache capacity in pages for the fitness simulation.
+        LRU cache capacity in 8 KB pages used for fitness evaluation.
     seed : int | None
         Random seed for reproducibility.  None means non-deterministic.
     """
@@ -41,29 +50,6 @@ class GAConfig:
     elite_count: int = 2
     cache_capacity_pages: int = 1000
     seed: int | None = None
-
-
-@dataclass
-class GAResult:
-    """
-    Outcome of a genetic algorithm run.
-
-    Attributes
-    ----------
-    best_schedule : list[int]
-        Best permutation found during the run.
-    best_fitness : float
-        Cache hit ratio of the best schedule.
-    best_simulation : SimulationResult
-        Full simulation result for the best schedule.
-    fitness_history : list[float]
-        Best fitness value recorded at each generation.
-    """
-
-    best_schedule: list[int]
-    best_fitness: float
-    best_simulation: SimulationResult
-    fitness_history: list[float] = field(default_factory=list)
 
 
 def _fitness(
@@ -190,11 +176,61 @@ def _swap_mutation(individual: list[int], rng: random.Random) -> None:
     individual[i], individual[j] = individual[j], individual[i]
 
 
+class GAScheduler(SchedulerBase):
+    """
+    Genetic algorithm-based query scheduler.
+
+    Uses tournament selection, order crossover, swap mutation, and
+    elitism to evolve a population of query permutations that maximise
+    the simulated LRU cache hit ratio.
+
+    Parameters
+    ----------
+    config : GAConfig | None
+        Algorithm parameters.  Defaults are used when None.
+    on_generation : callable or None
+        Optional callback invoked as ``on_generation(gen, best_fitness)``
+        after each generation completes.
+    """
+
+    def __init__(
+        self,
+        config: GAConfig | None = None,
+        on_generation: Callable[[int, float], None] | None = None,
+    ) -> None:
+        self.config = config or GAConfig()
+        self.on_generation = on_generation
+
+    def schedule(
+        self,
+        profiles: list[AccessProfile],
+    ) -> ScheduleResult:
+        """
+        Run the genetic algorithm to find a cache-friendly query schedule.
+
+        Parameters
+        ----------
+        profiles : list[AccessProfile]
+            One access profile per query.
+
+        Returns
+        -------
+        ScheduleResult
+            Best schedule, its fitness, simulation result, and fitness
+            history.
+        """
+        return run_ga(
+            profiles,
+            self.config,
+            on_generation=self.on_generation,
+        )
+
+
 def run_ga(
     profiles: list[AccessProfile],
     config: GAConfig | None = None,
     on_generation: Callable[[int, float], None] | None = None,
-) -> GAResult:
+) -> ScheduleResult:
     """
     Run the genetic algorithm to find a cache-friendly query schedule.
 
@@ -215,7 +251,7 @@ def run_ga(
 
     Returns
     -------
-    GAResult
+    ScheduleResult
         Best schedule, its fitness, full simulation result, and the
         per-generation fitness history.
     """
@@ -224,17 +260,18 @@ def run_ga(
 
     rng = random.Random(config.seed)
     n = len(profiles)
+    cache_capacity_pages = config.cache_capacity_pages
 
     if n == 0:
-        return GAResult(
+        return ScheduleResult(
             best_schedule=[],
             best_fitness=0.0,
             best_simulation=SimulationResult(total_requests=0, total_hits=0),
         )
 
     if n == 1:
-        sim = simulate_schedule(profiles, [0], config.cache_capacity_pages)
-        return GAResult(
+        sim = simulate_schedule(profiles, [0], cache_capacity_pages)
+        return ScheduleResult(
             best_schedule=[0],
             best_fitness=sim.hit_ratio,
             best_simulation=sim,
@@ -248,7 +285,7 @@ def run_ga(
         population.append(perm)
 
     fitnesses = [
-        _fitness(ind, profiles, config.cache_capacity_pages) for ind in population
+        _fitness(ind, profiles, cache_capacity_pages) for ind in population
     ]
 
     fitness_history: list[float] = []
@@ -285,7 +322,7 @@ def run_ga(
             if rng.random() < config.mutation_rate:
                 _swap_mutation(child, rng)
 
-            f = _fitness(child, profiles, config.cache_capacity_pages)
+            f = _fitness(child, profiles, cache_capacity_pages)
             new_population.append(child)
             new_fitnesses.append(f)
 
@@ -301,10 +338,10 @@ def run_ga(
     best_idx = max(range(len(population)), key=lambda i: fitnesses[i])
     best_schedule = population[best_idx]
     best_sim = simulate_schedule(
-        profiles, best_schedule, config.cache_capacity_pages,
+        profiles, best_schedule, cache_capacity_pages,
     )
 
-    return GAResult(
+    return ScheduleResult(
         best_schedule=best_schedule,
         best_fitness=best_sim.hit_ratio,
         best_simulation=best_sim,

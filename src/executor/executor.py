@@ -7,8 +7,6 @@ from typing import Any
 
 from psycopg import Connection
 
-from src.postgres.execute import get_execution_plan
-
 logger = logging.getLogger(__name__)
 
 
@@ -54,7 +52,7 @@ class QueryResult:
 
 
 @dataclass(frozen=True)
-class ScheduleResult:
+class ExecutionResult:
     """
     Aggregated result of executing a full schedule.
 
@@ -120,7 +118,7 @@ def execute_schedule(
     queries: dict[str, str],
     schedule: list[str],
     connection: Connection,
-) -> ScheduleResult:
+) -> ExecutionResult:
     """
     Execute queries in the given order and collect real cache statistics.
 
@@ -139,7 +137,7 @@ def execute_schedule(
 
     Returns
     -------
-    ScheduleResult
+    ExecutionResult
         Per-query and aggregate execution statistics.
     """
     query_results: list[QueryResult] = []
@@ -184,7 +182,7 @@ def execute_schedule(
 
     total_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
 
-    return ScheduleResult(
+    return ExecutionResult(
         query_results=query_results,
         total_elapsed_ms=total_elapsed_ms,
         total_shared_hit_blocks=total_hit,
@@ -192,13 +190,13 @@ def execute_schedule(
     )
 
 
-def print_schedule_result(result: ScheduleResult, label: str) -> None:
+def print_execution_result(result: ExecutionResult, label: str) -> None:
     """
     Print a formatted summary of a schedule execution.
 
     Parameters
     ----------
-    result : ScheduleResult
+    result : ExecutionResult
         Result from execute_schedule.
     label : str
         Header label for the output.

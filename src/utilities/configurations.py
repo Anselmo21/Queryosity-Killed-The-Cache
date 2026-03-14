@@ -13,3 +13,6 @@ PG_USER = "postgres"
 PG_PASSWORD = "postgres"
 PG_SCHEMA = "public"
 PG_STATEMENT_TIMEOUT_MS = 120_000
+
+# Docker container name (used for cache flushing via restart)
+PG_CONTAINER_NAME = "query_scheduler_pg"

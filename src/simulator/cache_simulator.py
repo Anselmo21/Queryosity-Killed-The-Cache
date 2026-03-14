@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from src.scheduler.access_profile import AccessProfile
+from src.simulator.access_profile import AccessProfile
 
 
 @dataclass(frozen=True)
