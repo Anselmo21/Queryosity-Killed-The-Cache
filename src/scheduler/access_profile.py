@@ -145,8 +145,8 @@ def build_access_profiles_from_db(
     for query_id, sql in queries.items():
         try:
             plan = get_execution_plan(sql, connection, analyze=analyze)
-        except RuntimeError:
-            logger.warning("Skipping %s: EXPLAIN failed", query_id)
+        except RuntimeError as exc:
+            logger.warning("Skipping %s: %s", query_id, exc)
             continue
         profiles.append(build_access_profile(query_id, plan))
     return profiles
