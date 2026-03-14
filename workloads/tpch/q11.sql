@@ -28,4 +28,3 @@ group by
 		)
 order by
 	value desc;
-limit -1;

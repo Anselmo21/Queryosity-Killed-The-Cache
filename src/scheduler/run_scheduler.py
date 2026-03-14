@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import time
-from pathlib import Path
 
 from src.postgres.connection import close_connection, create_connection
 from src.scheduler.access_profile import build_access_profiles_from_db
@@ -30,20 +29,7 @@ from src.utilities.configurations import (
     PG_STATEMENT_TIMEOUT_MS,
     PG_USER,
 )
-
-WORKLOAD_ROOT = Path(__file__).parents[3] / "workloads"
-
-WORKLOAD_DIRS = {
-    "tpch": WORKLOAD_ROOT / "tpch",
-    "tpcds": WORKLOAD_ROOT / "tpcds" / "modified",
-    "tpcds_full": WORKLOAD_ROOT / "tpcds",
-}
-
-DB_DEFAULTS = {
-    "tpch": "tpch",
-    "tpcds": "tpcds",
-    "tpcds_full": "tpcds",
-}
+from src.utilities.constants import DB_DEFAULTS, WORKLOAD_DIRS
 
 
 def load_queries(workload: str) -> dict[str, str]:

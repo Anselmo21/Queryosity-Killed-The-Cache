@@ -18,4 +18,3 @@ where
 		where
 			l_partkey = p_partkey
 	);
-limit -1;

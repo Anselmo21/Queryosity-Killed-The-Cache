@@ -40,4 +40,3 @@ order by
 	supp_nation,
 	cust_nation,
 	l_year;
-limit -1;
