@@ -146,7 +146,8 @@ def execute_schedule(
 
     t_start = time.perf_counter()
 
-    for query_id in schedule:
+    for i, query_id in enumerate(schedule, 1):
+        print(f"  [{i}/{len(schedule)}] Executing {query_id}…")
         sql = queries[query_id]
         explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}"
 

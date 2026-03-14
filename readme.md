@@ -410,10 +410,6 @@ The script prints a per-query table showing execution time, shared buffer hits, 
   TOTAL            9876.5     400,000     80,000   83.33%
 ```
 
-### Cache Flushing
-
-The buffer cache is **always flushed** before each schedule run by restarting the Docker container. This clears both PostgreSQL shared buffers and the OS page cache inside the container, ensuring cold-start and reproducible measurements every time.
-
 ---
 
 ## Running Tests
