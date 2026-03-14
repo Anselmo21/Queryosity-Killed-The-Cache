@@ -38,4 +38,3 @@ where
 	and n_name = 'IRAN'
 order by
 	s_name;
-limit -1;

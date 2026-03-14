@@ -1,6 +1,6 @@
 -- using 1773092998 as a seed to the RNG
 
-create view revenue0 (supplier_no, total_revenue) as
+with revenue0 (supplier_no, total_revenue) as (
 	select
 		l_suppkey,
 		sum(l_extendedprice * (1 - l_discount))
@@ -10,9 +10,8 @@ create view revenue0 (supplier_no, total_revenue) as
 		l_shipdate >= date '1997-01-01'
 		and l_shipdate < date '1997-01-01' + interval '3' month
 	group by
-		l_suppkey;
-
-
+		l_suppkey
+)
 select
 	s_suppkey,
 	s_name,
@@ -32,6 +31,3 @@ where
 	)
 order by
 	s_suppkey;
-
-drop view revenue0;
-limit -1;

@@ -38,4 +38,3 @@ group by
 	cntrycode
 order by
 	cntrycode;
-limit -1;

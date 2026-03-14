@@ -14,4 +14,3 @@ where
 	l_partkey = p_partkey
 	and l_shipdate >= date '1996-10-01'
 	and l_shipdate < date '1996-10-01' + interval '1' month;
-limit -1;

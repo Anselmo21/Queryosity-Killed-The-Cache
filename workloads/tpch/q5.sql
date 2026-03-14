@@ -25,4 +25,3 @@ group by
 	n_name
 order by
 	revenue desc;
-limit -1;
