@@ -15,7 +15,11 @@ resulting schedule with its cache hit ratio vs. the default (input) order.
 from __future__ import annotations
 
 import argparse
+import logging
+import re
 import time
+
+logging.basicConfig(level=logging.WARNING)
 
 from src.postgres.connection import close_connection, create_connection
 from src.scheduler.access_profile import build_access_profiles_from_db
@@ -55,7 +59,14 @@ def load_queries(workload: str) -> dict[str, str]:
     if not directory.exists():
         raise FileNotFoundError(f"Workload directory not found: {directory}")
 
-    files = sorted(directory.glob("*.sql"))
+    def _natural_sort_key(path):
+        """Sort 'query2' before 'query10' by splitting on digit boundaries."""
+        return [
+            int(part) if part.isdigit() else part.lower()
+            for part in re.split(r"(\d+)", path.stem)
+        ]
+
+    files = sorted(directory.glob("*.sql"), key=_natural_sort_key)
     if not files:
         raise FileNotFoundError(f"No .sql files found in {directory}")
 

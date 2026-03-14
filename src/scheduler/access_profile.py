@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from psycopg import Connection
 
@@ -134,10 +137,16 @@ def build_access_profiles_from_db(
     Returns
     -------
     list[AccessProfile]
-        One profile per query, in iteration order of the input mapping.
+        One profile per successfully explained query, in iteration order
+        of the input mapping.  Queries that fail EXPLAIN are skipped
+        with a warning.
     """
     profiles: list[AccessProfile] = []
     for query_id, sql in queries.items():
-        plan = get_execution_plan(sql, connection, analyze=analyze)
+        try:
+            plan = get_execution_plan(sql, connection, analyze=analyze)
+        except RuntimeError:
+            logger.warning("Skipping %s: EXPLAIN failed", query_id)
+            continue
         profiles.append(build_access_profile(query_id, plan))
     return profiles
