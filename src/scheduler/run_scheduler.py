@@ -22,6 +22,14 @@ from src.postgres.connection import close_connection, create_connection
 from src.scheduler.access_profile import build_access_profiles_from_db
 from src.scheduler.cache_simulator import simulate_schedule
 from src.scheduler.genetic_algorithm import GAConfig, run_ga
+from src.utilities.configurations import (
+    PG_HOST,
+    PG_PASSWORD,
+    PG_PORT,
+    PG_SCHEMA,
+    PG_STATEMENT_TIMEOUT_MS,
+    PG_USER,
+)
 
 WORKLOAD_ROOT = Path(__file__).parents[3] / "workloads"
 
@@ -145,12 +153,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Random seed for reproducibility (default: None)",
     )
-    parser.add_argument("--host", default="localhost")
-    parser.add_argument("--port", type=int, default=5432)
-    parser.add_argument("--user", default="postgres")
-    parser.add_argument("--password", default="postgres")
-    parser.add_argument("--schema", default="public")
-    parser.add_argument("--timeout-ms", type=int, default=120_000)
+    parser.add_argument("--host", default=PG_HOST)
+    parser.add_argument("--port", type=int, default=PG_PORT)
+    parser.add_argument("--user", default=PG_USER)
+    parser.add_argument("--password", default=PG_PASSWORD)
+    parser.add_argument("--schema", default=PG_SCHEMA)
+    parser.add_argument("--timeout-ms", type=int, default=PG_STATEMENT_TIMEOUT_MS)
     args = parser.parse_args(argv)
 
     db_name = DB_DEFAULTS[args.workload]

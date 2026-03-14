@@ -294,5 +294,58 @@ Execute the TPC-DS setup script
 ./setup_tpcds.sh 
 ```
 
-This will perform the same steps as the TPC-H setup. 
+This will perform the same steps as the TPC-H setup.
 
+# Running the GA Query Scheduler
+
+The genetic algorithm scheduler finds an execution order for a batch of queries that maximizes cache reuse under a simulated LRU buffer pool.
+
+## Quick Start
+
+Make sure the PostgreSQL container is running and the benchmark data is loaded (see above), then:
+
+```bash
+source venv/bin/activate
+python -m src.scheduler.run_scheduler --workload tpch
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--workload` | `tpch` | Query workload: `tpch`, `tpcds` (modified subset), or `tpcds_full` |
+| `--cache-pages` | `1000` | LRU cache capacity in 8 KB pages |
+| `--generations` | `200` | Number of GA generations |
+| `--pop` | `100` | Population size |
+| `--seed` | None | Random seed for reproducibility |
+
+PostgreSQL connection settings (host, port, user, password, schema, statement timeout) are read from `src/utilities/configurations.py`. Edit that file to match your environment. These can also be overridden per-run via `--host`, `--port`, `--user`, `--password`, `--schema`, and `--timeout-ms` flags.
+
+## Examples
+
+```bash
+# TPC-H with a smaller cache (forces more eviction, more room to optimize)
+python -m src.scheduler.run_scheduler --workload tpch --cache-pages 500
+
+# TPC-DS modified queries with more generations and a fixed seed
+python -m src.scheduler.run_scheduler --workload tpcds --generations 300 --pop 150 --seed 42
+
+# Full TPC-DS workload (99 queries)
+python -m src.scheduler.run_scheduler --workload tpcds_full --cache-pages 2000
+```
+
+## Output
+
+The script prints:
+
+1. **Baseline** — fitness of the default (alphabetical file) order
+2. **GA progress** — best fitness every 50 generations
+3. **GA best schedule** — the reordered query sequence and its fitness
+4. **Improvement** — difference in cache hit ratio (percentage points) over the baseline
+
+## Running Tests
+
+```bash
+source venv/bin/activate
+python -m pytest tests/ -v
+```
