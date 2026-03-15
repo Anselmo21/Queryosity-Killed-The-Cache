@@ -10,12 +10,10 @@ WORKLOAD_ROOT = PROJECT_ROOT / "workloads"
 
 WORKLOAD_DIRS = {
     "tpch": WORKLOAD_ROOT / "tpch",
-    "tpcds": WORKLOAD_ROOT / "tpcds" / "modified",
-    "tpcds_full": WORKLOAD_ROOT / "tpcds",
+    "tpcds": WORKLOAD_ROOT / "tpcds",
 }
 
 DB_DEFAULTS = {
     "tpch": "tpch",
     "tpcds": "tpcds",
-    "tpcds_full": "tpcds",
 }

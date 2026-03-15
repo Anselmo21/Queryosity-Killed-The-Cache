@@ -32,4 +32,8 @@ DATA_DIR="$DATA_DIR" \
 KEYS_SQL="$KEYS_SQL" \
 ./load_tpcds_data.sh
 
+echo "Step 4: Creating FK indexes"
+cat tpcds_indexes.sql | docker exec -i "$CONTAINER_NAME" \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME"
+
 echo "TPC-DS setup complete."
