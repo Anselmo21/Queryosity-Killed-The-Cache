@@ -91,6 +91,17 @@ class ExecutionResult:
             return 0.0
         return self.total_shared_hit_blocks / self.total_blocks
 
+    @property
+    def avg_hit_ratio(self) -> float:
+        """
+        Average cache hit ratio across all queries (unweighted).
+
+        Returns 0.0 when there are no query results.
+        """
+        if not self.query_results:
+            return 0.0
+        return sum(qr.hit_ratio for qr in self.query_results) / len(self.query_results)
+
 
 def _sum_blocks(plan_node: dict[str, Any]) -> tuple[int, int]:
     """
@@ -217,3 +228,4 @@ def print_execution_result(result: ExecutionResult, label: str) -> None:
         f"{result.total_shared_hit_blocks:>10,} {result.total_shared_read_blocks:>10,} "
         f"{result.hit_ratio * 100:>7.2f}%"
     )
+    print(f"  {'AVG HIT %':<15} {'':>10} {'':>10} {'':>10} {result.avg_hit_ratio * 100:>7.2f}%")

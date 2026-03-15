@@ -18,4 +18,4 @@ PG_STATEMENT_TIMEOUT_MS = 600_000  # 0 = no timeout
 PG_CONTAINER_NAME = "query_scheduler_pg"
 
 # Random seed for reproducible baseline ordering
-BASELINE_SEED = 1
+BASELINE_SEED = 55
