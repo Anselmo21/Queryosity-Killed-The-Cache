@@ -10,11 +10,11 @@ services:
     command:
       - "postgres"
       - "-c"
-      - "shared_buffers=8GB"
+      - "shared_buffers=2GB"
       - "-c"
-      - "work_mem=512MB"
+      - "work_mem=128MB"
       - "-c"
-      - "effective_cache_size=24GB"
+      - "effective_cache_size=12GB"
     shm_size: "9gb"
     ports:
       - "5432:5432"

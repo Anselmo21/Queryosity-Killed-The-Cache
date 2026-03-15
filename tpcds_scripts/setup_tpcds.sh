@@ -36,4 +36,8 @@ echo "Step 4: Creating FK indexes"
 cat tpcds_indexes.sql | docker exec -i "$CONTAINER_NAME" \
   psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME"
 
+echo "Step 5: Analyzing tables"
+docker exec "$CONTAINER_NAME" \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME" -c "ANALYZE;"
+
 echo "TPC-DS setup complete."
