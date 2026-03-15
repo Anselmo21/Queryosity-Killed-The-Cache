@@ -1,5 +1,5 @@
 """
-Run the GA query scheduler against a TPC-H or TPC-DS workload.
+Run a query scheduler against a TPC-H or TPC-DS workload.
 
 Usage
 -----
@@ -8,23 +8,23 @@ Usage
     python -m src.scheduler.run_scheduler --workload tpch --generations 300 --pop 150 --seed 42
 
 The script connects to PostgreSQL, collects EXPLAIN plans for every query in
-the chosen workload, builds access profiles, runs the GA, and prints the
-resulting schedule with its cache hit ratio vs. the default (input) order.
+the chosen workload, builds access profiles, runs the selected scheduling
+algorithm, and prints the resulting schedule with its cache hit ratio vs. the
+default (input) order.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import re
 import time
 
 logging.basicConfig(level=logging.WARNING)
 
 from src.postgres.connection import close_connection, create_connection
-from src.scheduler.access_profile import build_access_profiles_from_db
-from src.scheduler.cache_simulator import simulate_schedule
-from src.scheduler.genetic_algorithm import GAConfig, run_ga
+from src.scheduler.genetic_algorithm import GAConfig, GAScheduler
+from src.simulator.access_profile import build_access_profiles_from_db
+from src.simulator.cache_simulator import simulate_schedule
 from src.utilities.configurations import (
     PG_HOST,
     PG_PASSWORD,
@@ -34,46 +34,7 @@ from src.utilities.configurations import (
     PG_USER,
 )
 from src.utilities.constants import DB_DEFAULTS, WORKLOAD_DIRS
-
-
-def load_queries(workload: str) -> dict[str, str]:
-    """
-    Load all SQL queries from the workload directory.
-
-    Parameters
-    ----------
-    workload : str
-        Name of the workload.  Must be a key in WORKLOAD_DIRS.
-
-    Returns
-    -------
-    dict[str, str]
-        Mapping from query identifier (file stem) to SQL text.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the workload directory does not exist or contains no SQL files.
-    """
-    directory = WORKLOAD_DIRS[workload]
-    if not directory.exists():
-        raise FileNotFoundError(f"Workload directory not found: {directory}")
-
-    def _natural_sort_key(path):
-        """Sort 'query2' before 'query10' by splitting on digit boundaries."""
-        return [
-            int(part) if part.isdigit() else part.lower()
-            for part in re.split(r"(\d+)", path.stem)
-        ]
-
-    files = sorted(directory.glob("*.sql"), key=_natural_sort_key)
-    if not files:
-        raise FileNotFoundError(f"No .sql files found in {directory}")
-
-    queries: dict[str, str] = {}
-    for f in files:
-        queries[f.stem] = f.read_text()
-    return queries
+from src.utilities.workload import load_queries
 
 
 def _print_schedule(
@@ -112,14 +73,14 @@ def _print_schedule(
 
 def main(argv: list[str] | None = None) -> None:
     """
-    Parse arguments, build access profiles, and run the GA scheduler.
+    Parse arguments, build access profiles, and run the scheduler.
 
     Parameters
     ----------
     argv : list[str] | None
         Command-line arguments.  Uses sys.argv when None.
     """
-    parser = argparse.ArgumentParser(description="GA cache-aware query scheduler")
+    parser = argparse.ArgumentParser(description="Cache-aware query scheduler")
     parser.add_argument(
         "--workload",
         choices=list(WORKLOAD_DIRS),
@@ -131,6 +92,12 @@ def main(argv: list[str] | None = None) -> None:
         type=int,
         default=1000,
         help="LRU cache capacity in 8 KB pages (default: 1000)",
+    )
+    parser.add_argument(
+        "--algorithm",
+        choices=["ga"],
+        default="ga",
+        help="Scheduling algorithm to use (default: ga)",
     )
     parser.add_argument(
         "--generations",
@@ -198,29 +165,35 @@ def main(argv: list[str] | None = None) -> None:
         profiles, default_schedule, args.cache_pages, "Baseline (default order)",
     )
 
-    config = GAConfig(
-        population_size=args.pop,
-        num_generations=args.generations,
-        cache_capacity_pages=args.cache_pages,
-        seed=args.seed,
-    )
+    # Build the scheduler based on --algorithm
+    if args.algorithm == "ga":
+        ga_config = GAConfig(
+            population_size=args.pop,
+            num_generations=args.generations,
+            cache_capacity_pages=args.cache_pages,
+            seed=args.seed,
+        )
 
-    print(
-        f"\nRunning GA  "
-        f"(pop={config.population_size}, gens={config.num_generations})…"
-    )
+        def on_gen(gen: int, best: float) -> None:
+            if gen % 50 == 0 or gen == ga_config.num_generations - 1:
+                print(f"  gen {gen:4d}  best F_hit = {best:.4f}")
 
-    def on_gen(gen: int, best: float) -> None:
-        if gen % 50 == 0 or gen == config.num_generations - 1:
-            print(f"  gen {gen:4d}  best F_hit = {best:.4f}")
+        scheduler = GAScheduler(config=ga_config, on_generation=on_gen)
+
+        print(
+            f"\nRunning GA  "
+            f"(pop={ga_config.population_size}, gens={ga_config.num_generations})…"
+        )
+    else:
+        raise ValueError(f"Unknown algorithm: {args.algorithm}")
 
     t0 = time.perf_counter()
-    result = run_ga(profiles, config, on_generation=on_gen)
+    result = scheduler.schedule(profiles)
     elapsed = time.perf_counter() - t0
     print(f"  Finished in {elapsed:.1f}s")
 
     ga_fitness = _print_schedule(
-        profiles, result.best_schedule, args.cache_pages, "GA best schedule",
+        profiles, result.best_schedule, args.cache_pages, "Best schedule",
     )
 
     improvement = ga_fitness - baseline_fitness
@@ -230,12 +203,12 @@ def main(argv: list[str] | None = None) -> None:
         f"{improvement:+.4f}  ({improvement * 100:+.2f}pp)"
     )
     if improvement > 0:
-        print("  GA found a better schedule.")
+        print("  Scheduler found a better order.")
     elif improvement == 0:
-        print("  GA matched the baseline (already optimal or cache too large).")
+        print("  Matched the baseline (already optimal or cache too large).")
     else:
         print(
-            "  Baseline order was not beaten — consider more generations "
+            "  Baseline order was not beaten — consider tuning parameters "
             "or a smaller cache."
         )
     print(f"{'─' * 48}\n")

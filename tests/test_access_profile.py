@@ -1,4 +1,4 @@
-from src.scheduler.access_profile import AccessProfile, build_access_profile
+from src.simulator.access_profile import AccessProfile, build_access_profile
 
 
 class TestAccessProfile:

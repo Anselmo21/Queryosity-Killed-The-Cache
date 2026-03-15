@@ -31,7 +31,8 @@ def create_connection(
     schema : str
         Schema to set in the PostgreSQL search path.
     statement_timeout_ms : int
-        Maximum allowed execution time for SQL statements in milliseconds.
+        Maximum allowed execution time per statement in milliseconds.
+        0 disables the timeout entirely.
 
     Returns
     -------
