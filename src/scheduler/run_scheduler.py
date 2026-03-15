@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import time
 
 logging.basicConfig(level=logging.WARNING)
@@ -26,6 +27,7 @@ from src.scheduler.genetic_algorithm import GAConfig, GAScheduler
 from src.simulator.access_profile import build_access_profiles_from_db
 from src.simulator.cache_simulator import simulate_schedule
 from src.utilities.configurations import (
+    BASELINE_SEED,
     PG_HOST,
     PG_PASSWORD,
     PG_PORT,
@@ -160,9 +162,11 @@ def main(argv: list[str] | None = None) -> None:
     finally:
         close_connection(conn)
 
-    default_schedule = list(range(len(profiles)))
+    rng = random.Random(BASELINE_SEED)
+    random_schedule = list(range(len(profiles)))
+    rng.shuffle(random_schedule)
     baseline_fitness = _print_schedule(
-        profiles, default_schedule, args.cache_pages, "Baseline (default order)",
+        profiles, random_schedule, args.cache_pages, "Baseline (random order)",
     )
 
     # Build the scheduler based on --algorithm

@@ -12,7 +12,10 @@ PG_PORT = 5432
 PG_USER = "postgres"
 PG_PASSWORD = "postgres"
 PG_SCHEMA = "public"
-PG_STATEMENT_TIMEOUT_MS = 0  # 0 = no timeout
+PG_STATEMENT_TIMEOUT_MS = 600_000  # 0 = no timeout
 
 # Docker container name (used for cache flushing via restart)
 PG_CONTAINER_NAME = "query_scheduler_pg"
+
+# Random seed for reproducible baseline ordering
+BASELINE_SEED = 1

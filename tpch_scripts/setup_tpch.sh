@@ -22,4 +22,8 @@ cat tpch_fkeys.sql | docker exec -i "$CONTAINER_NAME" \
 cat tpch_indexes.sql | docker exec -i "$CONTAINER_NAME" \
   psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME"
 
+echo "Analyzing tables…"
+docker exec "$CONTAINER_NAME" \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DB_NAME" -c "ANALYZE;"
+
 echo "TPC-H setup complete."

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import subprocess
 import time
 
@@ -31,6 +32,7 @@ from psycopg import Connection
 from src.executor.executor import execute_schedule, print_execution_result
 from src.postgres.connection import close_connection, create_connection
 from src.utilities.configurations import (
+    BASELINE_SEED,
     PG_CONTAINER_NAME,
     PG_HOST,
     PG_PASSWORD,
@@ -195,13 +197,17 @@ def main(argv: list[str] | None = None) -> None:
     baseline = None
 
     if args.compare_baseline:
+        rng = random.Random(BASELINE_SEED)
+        random_order = list(query_ids)
+        rng.shuffle(random_order)
         flush_buffer_cache(args.container)
         print(f"\nConnecting to database '{db_name}' at {args.host}:{args.port}…")
         conn = _connect(args, db_name)
         try:
-            print("\nExecuting baseline (default order)…")
-            baseline = execute_schedule(queries, query_ids, conn)
-            print_execution_result(baseline, "Baseline (default order)")
+            print("\nExecuting baseline (random order)…")
+            print(f"  Order: {' → '.join(random_order)}")
+            baseline = execute_schedule(queries, random_order, conn)
+            print_execution_result(baseline, "Baseline (random order)")
         finally:
             close_connection(conn)
 
