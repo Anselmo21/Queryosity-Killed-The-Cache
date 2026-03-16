@@ -32,8 +32,6 @@ from src.simulator.cache_simulator import (
     simulate_schedule,
     simulate_schedule_page_level,
 )
-from src.simulator.dqn_simulator import DQN
-from src.simulator.simulator_types import PageSet, QueryPageCount
 from src.utilities.configurations import (
     BASELINE_SEED,
     PG_HOST,
@@ -52,7 +50,7 @@ def _print_schedule(
     schedule: list[int],
     cache_pages: int,
     label: str,
-    page_sets: list[PageSet] | None = None,
+    page_sets: list[set[tuple[str, int]]] | None = None,
 ) -> float:
     """
     Simulate a schedule and print its fitness summary.
@@ -67,7 +65,7 @@ def _print_schedule(
         LRU cache capacity in pages.
     label : str
         Header label for the printed output.
-    page_sets : list[PageSet] | None
+    page_sets : list[set[tuple[str, int]]] | None
         Per-query page sets for page-level simulation.
 
     Returns
@@ -207,7 +205,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # Load page-level access data if available
     page_access_dir = PROJECT_ROOT / "page_access" / args.workload
-    page_sets: list[PageSet] | None = None
+    page_sets: list[set[tuple[str, int]]] | None = None
 
     if page_access_dir.is_dir() and any(page_access_dir.glob("*.csv")):
         print(f"\nLoading page access data from {page_access_dir}…")
@@ -216,10 +214,7 @@ def main(argv: list[str] | None = None) -> None:
         page_sets = []
         for profile in profiles:
             if profile.query_id in all_pages:
-                query_pages = all_pages[profile.query_id]
-                page_sets.append(set(
-                    QueryPageCount(*query_page) for query_page in query_pages
-                ))
+                page_sets.append(all_pages[profile.query_id])
             else:
                 print(f"  WARNING: no page access data for {profile.query_id}, using empty set")
                 page_sets.append(set())

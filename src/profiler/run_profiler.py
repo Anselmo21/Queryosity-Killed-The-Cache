@@ -68,23 +68,6 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"  Output directory: {output_dir}")
 
-    # Ensure pg_buffercache extension is available
-    print("  Ensuring pg_buffercache extension…")
-    init_conn = create_connection(
-        db_name=db_name,
-        user=args.user,
-        password=args.password,
-        host=args.host,
-        port=args.port,
-        schema=args.schema,
-        statement_timeout_ms=args.timeout_ms,
-    )
-    try:
-        with init_conn.cursor() as cur:
-            cur.execute("CREATE EXTENSION IF NOT EXISTS pg_buffercache;")
-    finally:
-        close_connection(init_conn)
-
     t_total = time.perf_counter()
 
     for i, (query_id, sql) in enumerate(queries.items(), 1):
@@ -103,7 +86,7 @@ def main(argv: list[str] | None = None) -> None:
         )
 
         try:
-            pages = profile_query(sql, conn)
+            pages = profile_query(query_id, sql, conn)
             path = save_page_access(query_id, pages, output_dir)
             print(f"    Saved to {path}")
         except Exception as exc:
