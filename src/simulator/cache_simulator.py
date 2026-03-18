@@ -10,12 +10,16 @@ employs a clock-sweep (also called second-chance) algorithm:
   each frame's usage count.  The first frame whose count reaches 0 is
   evicted and replaced with the new page.
 
-This module provides two granularities of clock-sweep cache:
+This module also provides:
 
-* ``ClockSweepCache`` — table-level, used when only EXPLAIN-derived
-  access profiles are available.
-* ``PageClockSweepCache`` — individual-page-level, used when
-  ``pg_buffercache`` profiling data is available.
+* ``PageClockSweepCache.batch_access`` — bulk hit detection via set
+  intersection (C-optimised in CPython) followed by clock-sweep
+  insertion of misses only, avoiding per-page dict lookups for hits.
+* ``compute_overlap_matrix`` / ``approximate_schedule_fitness`` — a
+  precomputed pairwise page-overlap matrix with statistical correction
+  for double-counting that estimates cache hits without full clock-sweep
+  simulation, framing cache-aware scheduling as an Asymmetric Travelling
+  Salesman Problem.
 """
 
 from __future__ import annotations
@@ -30,9 +34,12 @@ MAX_USAGE_COUNT = 5
 
 def encode_page_sets(
     page_sets: list[set[tuple[str, int]]],
-) -> tuple[list[list[int]], dict[tuple[str, int], int]]:
+) -> tuple[list[frozenset[int]], dict[tuple[str, int], int]]:
     """
     Map (table, block) tuples to contiguous integers for faster hashing.
+
+    Returns frozensets so they can be used directly with
+    ``PageClockSweepCache.batch_access`` and set-intersection operations.
 
     Parameters
     ----------
@@ -41,19 +48,24 @@ def encode_page_sets(
 
     Returns
     -------
-    tuple[list[list[int]], dict[tuple[str, int], int]]
-        Integer-encoded page lists and the mapping used.
+    tuple[list[frozenset[int]], dict[tuple[str, int], int]]
+        Integer-encoded page frozensets and the mapping used.
     """
     page_to_id: dict[tuple[str, int], int] = {}
-    encoded: list[list[int]] = []
+    encoded: list[frozenset[int]] = []
     for ps in page_sets:
         int_pages: list[int] = []
         for page in ps:
             if page not in page_to_id:
                 page_to_id[page] = len(page_to_id)
             int_pages.append(page_to_id[page])
-        encoded.append(int_pages)
+        encoded.append(frozenset(int_pages))
     return encoded, page_to_id
+
+
+# ---------------------------------------------------------------------------
+# Simulation result
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -82,6 +94,11 @@ class SimulationResult:
         if self.total_requests == 0:
             return 0.0
         return self.total_hits / self.total_requests
+
+
+# ---------------------------------------------------------------------------
+# Clock-sweep caches
+# ---------------------------------------------------------------------------
 
 
 class ClockSweepCache:
@@ -242,6 +259,33 @@ class PageClockSweepCache:
         self._lookup: dict[int, int] = {}
         self._hand: int = 0
 
+    def _insert_page(self, page: int) -> None:
+        """
+        Insert a single page into the cache, evicting if necessary.
+
+        Parameters
+        ----------
+        page : int
+            Integer page ID to insert (must not already be cached).
+        """
+        if len(self._page_ids) < self.capacity:
+            self._lookup[page] = len(self._page_ids)
+            self._page_ids.append(page)
+            self._usage.append(1)
+            return
+
+        while self._usage[self._hand] > 0:
+            self._usage[self._hand] -= 1
+            self._hand = (self._hand + 1) % self.capacity
+
+        old_page = self._page_ids[self._hand]
+        del self._lookup[old_page]
+
+        self._page_ids[self._hand] = page
+        self._usage[self._hand] = 1
+        self._lookup[page] = self._hand
+        self._hand = (self._hand + 1) % self.capacity
+
     def access(self, page: int) -> bool:
         """
         Access a page in the cache.
@@ -270,28 +314,48 @@ class PageClockSweepCache:
         if self.capacity == 0:
             return False
 
-        # Buffer pool not yet full — append directly
-        if len(self._page_ids) < self.capacity:
-            self._lookup[page] = len(self._page_ids)
-            self._page_ids.append(page)
-            self._usage.append(1)
-            return False
-
-        # Sweep for a victim
-        while self._usage[self._hand] > 0:
-            self._usage[self._hand] -= 1
-            self._hand = (self._hand + 1) % self.capacity
-
-        # Evict the victim at the current hand position
-        old_page = self._page_ids[self._hand]
-        del self._lookup[old_page]
-
-        self._page_ids[self._hand] = page
-        self._usage[self._hand] = 1
-        self._lookup[page] = self._hand
-
-        self._hand = (self._hand + 1) % self.capacity
+        self._insert_page(page)
         return False
+
+    def batch_access(self, pages: frozenset[int]) -> int:
+        """
+        Access a batch of pages, returning the number of cache hits.
+
+        Hit detection uses a single set intersection against the
+        internal lookup dict (C-optimised in CPython), avoiding
+        per-page branching for hits.  Only misses are processed
+        individually through the clock-sweep eviction path.
+
+        This models PostgreSQL's behaviour more accurately than
+        element-by-element access: a query reads all its pages during
+        plan execution, so the buffer manager processes them as a batch.
+
+        Parameters
+        ----------
+        pages : frozenset[int]
+            Set of integer page IDs accessed by a single query.
+
+        Returns
+        -------
+        int
+            Number of pages that were already cached (hits).
+        """
+        cached_keys = self._lookup.keys()
+        hits = pages & cached_keys
+        hit_count = len(hits)
+
+        # Bump usage counts for hits
+        for page in hits:
+            idx = self._lookup[page]
+            if self._usage[idx] < MAX_USAGE_COUNT:
+                self._usage[idx] += 1
+
+        # Insert misses through clock-sweep eviction
+        if self.capacity > 0:
+            for page in pages - hits:
+                self._insert_page(page)
+
+        return hit_count
 
     def reset(self) -> None:
         """Clear all entries from the cache."""
@@ -299,6 +363,144 @@ class PageClockSweepCache:
         self._usage.clear()
         self._lookup.clear()
         self._hand = 0
+
+
+# ---------------------------------------------------------------------------
+# Pairwise overlap matrix (ATSP formulation)
+# ---------------------------------------------------------------------------
+
+
+def compute_overlap_matrix(
+    page_sets: list[frozenset[int]],
+) -> list[list[int]]:
+    """
+    Precompute pairwise page-overlap counts between all query pairs.
+
+    ``M[i][j]`` is the number of pages shared between query *i* and
+    query *j*.  The matrix is symmetric.
+
+    Together with ``approximate_schedule_fitness``, this reframes
+    cache-aware query scheduling as a variant of the **Asymmetric
+    Travelling Salesman Problem**: maximise the sum of edge weights
+    (page overlaps) along the tour (schedule).
+
+    Parameters
+    ----------
+    page_sets : list[frozenset[int]]
+        Per-query page sets (integer-encoded).
+
+    Returns
+    -------
+    list[list[int]]
+        Symmetric *n* x *n* overlap matrix.
+    """
+    n = len(page_sets)
+    matrix = [[0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            overlap = len(page_sets[i] & page_sets[j])
+            matrix[i][j] = overlap
+            matrix[j][i] = overlap
+    return matrix
+
+
+def approximate_schedule_fitness(
+    overlap_matrix: list[list[int]],
+    page_counts: list[int],
+    schedule: list[int],
+    cache_capacity_pages: int,
+) -> float:
+    """
+    Fast approximate fitness using pairwise overlaps with correction.
+
+    For each query at position *k*, sums pairwise overlaps with
+    preceding queries within a sliding window bounded by
+    *cache_capacity_pages*.  To reduce double-counting from pages
+    shared by three or more queries, each predecessor's contribution
+    is discounted by its estimated overlap with already-counted
+    predecessors within the target query's page set.
+
+    The discount for predecessor *p_i* given already-counted
+    predecessors *{p_1, ..., p_{i-1}}* is::
+
+        discount_i = Σ_j  overlap[p_i][p_j] * overlap[p_j][q] / page_counts[p_j]
+
+    This estimates the triple intersection ``|p_i ∩ p_j ∩ q|`` via
+    an independence assumption, providing a much tighter bound than
+    capping at ``page_counts[q]`` alone.
+
+    Complexity
+    ----------
+    O(n · w²) per call, where *w* is the average window depth.  Only
+    marginally slower than the uncorrected O(n · w) approach, and
+    significantly faster than full clock-sweep simulation.
+
+    Parameters
+    ----------
+    overlap_matrix : list[list[int]]
+        Precomputed symmetric overlap matrix from ``compute_overlap_matrix``.
+    page_counts : list[int]
+        Number of distinct pages per query (same indexing as *overlap_matrix*).
+    schedule : list[int]
+        Permutation of query indices representing the execution order.
+    cache_capacity_pages : int
+        Cache capacity in pages, used to bound the look-back window.
+
+    Returns
+    -------
+    float
+        Approximate cache hit ratio in [0.0, 1.0].
+    """
+    n = len(schedule)
+    if n == 0:
+        return 0.0
+
+    total_requests = 0
+    for idx in schedule:
+        total_requests += page_counts[idx]
+    if total_requests == 0:
+        return 0.0
+
+    total_hits = 0
+    for k in range(1, n):
+        q = schedule[k]
+        budget = cache_capacity_pages
+        hits_for_q = 0.0
+        counted_prevs: list[int] = []
+
+        for w in range(k - 1, -1, -1):
+            prev = schedule[w]
+            budget -= page_counts[prev]
+            if budget < 0:
+                break
+
+            incremental = overlap_matrix[prev][q]
+
+            # Discount by estimated triple-intersection with
+            # already-counted predecessors
+            discount = 0.0
+            for cp in counted_prevs:
+                if page_counts[cp] > 0:
+                    discount += (
+                        overlap_matrix[prev][cp]
+                        * overlap_matrix[cp][q]
+                        / page_counts[cp]
+                    )
+
+            hits_for_q += max(0.0, incremental - discount)
+            counted_prevs.append(prev)
+
+        # Cap at the query's own page count
+        if hits_for_q > page_counts[q]:
+            hits_for_q = page_counts[q]
+        total_hits += hits_for_q
+
+    return total_hits / total_requests
+
+
+# ---------------------------------------------------------------------------
+# Schedule simulation (exact)
+# ---------------------------------------------------------------------------
 
 
 def simulate_schedule(
@@ -345,23 +547,22 @@ def simulate_schedule(
 
 
 def simulate_schedule_page_level(
-    page_lists: list[list[int]],
+    page_sets: list[frozenset[int]],
     schedule: list[int],
     cache_capacity_pages: int,
 ) -> SimulationResult:
     """
     Simulate executing queries through a page-level clock-sweep cache.
 
-    Uses integer-encoded page lists (from ``encode_page_sets``) for fast
-    hashing and lookup.
+    Uses ``batch_access`` to detect hits via set intersection at C level,
+    then processes only misses through the clock-sweep eviction path.
 
     Parameters
     ----------
-    page_lists : list[list[int]]
-        Integer-encoded page lists indexed by position.  Each list
-        contains page IDs representing the pages accessed by that query.
+    page_sets : list[frozenset[int]]
+        Per-query page sets (integer-encoded via ``encode_page_sets``).
     schedule : list[int]
-        Permutation of ``range(len(page_lists))`` specifying execution order.
+        Permutation of ``range(len(page_sets))`` specifying execution order.
     cache_capacity_pages : int
         Cache capacity in pages.
 
@@ -375,9 +576,8 @@ def simulate_schedule_page_level(
     total_hits = 0
 
     for idx in schedule:
-        for page in page_lists[idx]:
-            total_requests += 1
-            if cache.access(page):
-                total_hits += 1
+        pages = page_sets[idx]
+        total_requests += len(pages)
+        total_hits += cache.batch_access(pages)
 
     return SimulationResult(total_requests=total_requests, total_hits=total_hits)
