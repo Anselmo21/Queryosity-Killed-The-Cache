@@ -8,6 +8,34 @@ from src.simulator.access_profile import AccessProfile
 from src.simulator.simulator_types import PageSet
 
 
+def encode_page_sets(
+    page_sets: list[set[tuple[str, int]]],
+) -> tuple[list[list[int]], dict[tuple[str, int], int]]:
+    """
+    Map (table, block) tuples to contiguous integers for faster hashing.
+
+    Parameters
+    ----------
+    page_sets : list[set[tuple[str, int]]]
+        Per-query page sets using (table, block) tuples.
+
+    Returns
+    -------
+    tuple[list[list[int]], dict[tuple[str, int], int]]
+        Integer-encoded page lists and the mapping used.
+    """
+    page_to_id: dict[tuple[str, int], int] = {}
+    encoded: list[list[int]] = []
+    for ps in page_sets:
+        int_pages: list[int] = []
+        for page in ps:
+            if page not in page_to_id:
+                page_to_id[page] = len(page_to_id)
+            int_pages.append(page_to_id[page])
+        encoded.append(int_pages)
+    return encoded, page_to_id
+
+
 @dataclass(frozen=True)
 class SimulationResult:
     """
@@ -120,8 +148,9 @@ class PageLRUCache:
     """
     Fixed-capacity LRU cache operating at individual page granularity.
 
-    Each entry is a single (table, block_number) page.  Capacity is
-    measured in pages.
+    Each entry is an integer page ID (use ``encode_page_sets`` to convert
+    (table, block) tuples to integers for faster hashing and lookup).
+    Capacity is measured in pages.
 
     Parameters
     ----------
@@ -133,16 +162,16 @@ class PageLRUCache:
         if capacity_pages < 0:
             raise ValueError("capacity_pages must be non-negative")
         self.capacity = capacity_pages
-        self._entries: OrderedDict[tuple[str, int], None] = OrderedDict()
+        self._entries: OrderedDict[int, None] = OrderedDict()
 
-    def access(self, page: tuple[str, int]) -> bool:
+    def access(self, page: int) -> bool:
         """
         Access a page in the cache.
 
         Parameters
         ----------
-        page : tuple[str, int]
-            (table_name, block_number) identifying the page.
+        page : int
+            Integer page ID (from ``encode_page_sets``).
 
         Returns
         -------
@@ -207,23 +236,23 @@ def simulate_schedule(
 
 
 def simulate_schedule_page_level(
-    page_sets: list[set[tuple[str, int]]],
+    page_lists: list[list[int]],
     schedule: list[int],
     cache_capacity_pages: int,
 ) -> SimulationResult:
     """
     Simulate executing queries through a page-level LRU cache.
 
-    Uses actual (table, block) page sets captured from pg_buffercache
-    instead of table-level estimates.
+    Uses integer-encoded page lists (from ``encode_page_sets``) for fast
+    hashing and lookup.
 
     Parameters
     ----------
-    page_sets : list[set[tuple[str, int]]]
-        Page sets indexed by position.  Each set contains (table, block)
-        tuples representing the pages accessed by that query.
+    page_lists : list[list[int]]
+        Integer-encoded page lists indexed by position.  Each list
+        contains page IDs representing the pages accessed by that query.
     schedule : list[int]
-        Permutation of ``range(len(page_sets))`` specifying execution order.
+        Permutation of ``range(len(page_lists))`` specifying execution order.
     cache_capacity_pages : int
         LRU cache capacity in pages.
 
@@ -237,7 +266,7 @@ def simulate_schedule_page_level(
     total_hits = 0
 
     for idx in schedule:
-        for page in page_sets[idx]:
+        for page in page_lists[idx]:
             total_requests += 1
             if cache.access(page):
                 total_hits += 1

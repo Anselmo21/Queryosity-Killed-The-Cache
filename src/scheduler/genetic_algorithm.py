@@ -65,12 +65,12 @@ def _fitness(
     individual: list[int],
     profiles: list[AccessProfile],
     cache_capacity_pages: int,
-    page_sets: list[set[tuple[str, int]]] | None = None,
+    page_lists: list[list[int]] | None = None,
 ) -> float:
     """
     Evaluate the cache hit-ratio fitness of an individual.
 
-    When page_sets are provided, uses page-level LRU simulation.
+    When page_lists are provided, uses page-level LRU simulation.
     Otherwise falls back to table-level simulation.
 
     Parameters
@@ -81,17 +81,17 @@ def _fitness(
         Access profiles for each query, indexed by query index.
     cache_capacity_pages : int
         LRU cache capacity in 8 KB pages.
-    page_sets : list[set[tuple[str, int]]] | None
-        Per-query page sets from pg_buffercache profiling.
+    page_lists : list[list[int]] | None
+        Integer-encoded page lists from pg_buffercache profiling.
 
     Returns
     -------
     float
         Cache hit ratio in the range [0.0, 1.0].
     """
-    if page_sets is not None:
+    if page_lists is not None:
         result = simulate_schedule_page_level(
-            page_sets, individual, cache_capacity_pages,
+            page_lists, individual, cache_capacity_pages,
         )
     else:
         result = simulate_schedule(profiles, individual, cache_capacity_pages)
@@ -221,7 +221,7 @@ class GAScheduler(SchedulerBase):
     def schedule(
         self,
         profiles: list[AccessProfile],
-        page_sets: list[set[tuple[str, int]]] | None = None,
+        page_lists: list[list[int]] | None = None,
     ) -> ScheduleResult:
         """
         Run the genetic algorithm to find a cache-friendly query schedule.
@@ -230,9 +230,9 @@ class GAScheduler(SchedulerBase):
         ----------
         profiles : list[AccessProfile]
             One access profile per query.
-        page_sets : list[set[tuple[str, int]]] | None
-            Per-query page sets from pg_buffercache profiling.  When
-            provided, fitness is evaluated at page-level granularity.
+        page_lists : list[list[int]] | None
+            Integer-encoded page lists from pg_buffercache profiling.
+            When provided, fitness is evaluated at page-level granularity.
 
         Returns
         -------
@@ -244,7 +244,7 @@ class GAScheduler(SchedulerBase):
             profiles,
             self.config,
             on_generation=self.on_generation,
-            page_sets=page_sets,
+            page_lists=page_lists,
         )
 
 
@@ -252,7 +252,7 @@ def run_ga(
     profiles: list[AccessProfile],
     config: GAConfig | None = None,
     on_generation: Callable[[int, float], None] | None = None,
-    page_sets: list[set[tuple[str, int]]] | None = None,
+    page_lists: list[list[int]] | None = None,
 ) -> ScheduleResult:
     """
     Run the genetic algorithm to find a cache-friendly query schedule.
@@ -271,8 +271,8 @@ def run_ga(
     on_generation : callable or None
         Optional callback invoked as ``on_generation(gen, best_fitness)``
         after each generation completes.
-    page_sets : list[set[tuple[str, int]]] | None
-        Per-query page sets from pg_buffercache profiling.  When
+    page_lists : list[list[int]] | None
+        Integer-encoded page lists from pg_buffercache profiling.  When
         provided, fitness is evaluated at page-level granularity.
 
     Returns
@@ -296,8 +296,8 @@ def run_ga(
         )
 
     if n == 1:
-        if page_sets is not None:
-            sim = simulate_schedule_page_level(page_sets, [0], cache_capacity_pages)
+        if page_lists is not None:
+            sim = simulate_schedule_page_level(page_lists, [0], cache_capacity_pages)
         else:
             sim = simulate_schedule(profiles, [0], cache_capacity_pages)
         return ScheduleResult(
@@ -314,7 +314,7 @@ def run_ga(
         population.append(perm)
 
     fitnesses = [
-        _fitness(ind, profiles, cache_capacity_pages, page_sets) for ind in population
+        _fitness(ind, profiles, cache_capacity_pages, page_lists) for ind in population
     ]
 
     fitness_history: list[float] = []
@@ -346,7 +346,7 @@ def run_ga(
             if rng.random() < config.mutation_rate:
                 _swap_mutation(child, rng)
 
-            f = _fitness(child, profiles, cache_capacity_pages, page_sets)
+            f = _fitness(child, profiles, cache_capacity_pages, page_lists)
             new_population.append(child)
 
         population = new_population
@@ -359,9 +359,9 @@ def run_ga(
 
     best_idx = max(range(len(population)), key=lambda i: fitnesses[i])
     best_schedule = population[best_idx]
-    if page_sets is not None:
+    if page_lists is not None:
         best_sim = simulate_schedule_page_level(
-            page_sets, best_schedule, cache_capacity_pages,
+            page_lists, best_schedule, cache_capacity_pages,
         )
     else:
         best_sim = simulate_schedule(
