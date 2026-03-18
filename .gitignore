@@ -8,3 +8,6 @@ __pycache__
 
 # Syncthing config files
 .stignore
+
+# IDE-specific files
+.vscode/
