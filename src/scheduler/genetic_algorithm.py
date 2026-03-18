@@ -8,9 +8,10 @@ the simulated LRU cache hit ratio.
 
 from __future__ import annotations
 
+import copy
 import random
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import dataclass, field
+from typing import Callable, Optional
 
 from src.scheduler.base_scheduler import ScheduleResult, SchedulerBase
 from src.simulator.access_profile import AccessProfile
@@ -19,6 +20,7 @@ from src.simulator.cache_simulator import (
     simulate_schedule,
     simulate_schedule_page_level,
 )
+from src.simulator.simulator_types import PageSet
 
 
 @dataclass
@@ -60,7 +62,7 @@ def _fitness(
     individual: list[int],
     profiles: list[AccessProfile],
     cache_capacity_pages: int,
-    page_sets: list[set[tuple[str, int]]] | None = None,
+    page_sets: list[PageSet] | None = None,
 ) -> float:
     """
     Evaluate the cache hit-ratio fitness of an individual.
@@ -76,7 +78,7 @@ def _fitness(
         Access profiles for each query, indexed by query index.
     cache_capacity_pages : int
         LRU cache capacity in 8 KB pages.
-    page_sets : list[set[tuple[str, int]]] | None
+    page_sets : list[PageSet] | None
         Per-query page sets from pg_buffercache profiling.
 
     Returns
@@ -89,16 +91,17 @@ def _fitness(
             page_sets, individual, cache_capacity_pages,
         )
     else:
-        result = simulate_schedule(profiles, individual, cache_capacity_pages)
+        result = simulate_schedule(
+            profiles, individual, cache_capacity_pages
+        )
     return result.hit_ratio
 
 
 def _tournament_select(
-    population: list[list[int]],
-    fitnesses: list[float],
+    population: list[Individual],
     k: int,
     rng: random.Random,
-) -> list[int]:
+) -> Individual:
     """
     Select one individual from the population via k-tournament selection.
 
@@ -107,10 +110,8 @@ def _tournament_select(
 
     Parameters
     ----------
-    population : list[list[int]]
+    population : list[Individual]
         Current population of individuals.
-    fitnesses : list[float]
-        Fitness value for each individual in the population.
     k : int
         Number of candidates to draw for the tournament.
     rng : random.Random
@@ -118,12 +119,12 @@ def _tournament_select(
 
     Returns
     -------
-    list[int]
+    Individual
         Copy of the selected individual.
     """
     candidates = rng.sample(range(len(population)), k)
-    winner = max(candidates, key=lambda i: fitnesses[i])
-    return list(population[winner])
+    winner = max(candidates, key=lambda i: population[i].fitness())
+    return population[winner]
 
 
 def _order_crossover(
@@ -188,6 +189,95 @@ def _swap_mutation(individual: list[int], rng: random.Random) -> None:
     individual[i], individual[j] = individual[j], individual[i]
 
 
+@dataclass
+class Individual:
+    schedule: list[int]
+    profiles: list[AccessProfile]
+    cache_capacity_pages: int
+    _rng: random.Random
+    _config: GAConfig
+    _fitness: Optional[float] = field(init=False, default=None)
+
+    def fitness(self) -> float:
+        if self._fitness is None:
+            self._fitness = _fitness(
+                self.schedule,
+                self.profiles,
+                self.cache_capacity_pages,
+                None,
+            )
+        return self._fitness
+
+    def clone(self) -> Individual:
+        # Shallow copy all attributes
+        new = copy.copy(self)
+        # Deep copy schedule
+        new.schedule = list(self.schedule)
+        if new._rng.random() < new._config.mutation_rate:
+            _swap_mutation(new.schedule, new._rng)
+        return new
+
+    def __matmul__(
+        self,
+        other: Individual,
+    ) -> Individual:
+        if self._rng.random() < self._config.crossover_rate:
+            new_schedule = _order_crossover(
+                self.schedule,
+                other.schedule,
+                rng=self._rng
+            )
+            new = self.clone()
+            new._fitness = None
+            new.schedule = new_schedule
+            if new._rng.random() < new._config.mutation_rate:
+                _swap_mutation(new.schedule, new._rng)
+        else:
+            new = self.clone()
+        return new
+
+
+@dataclass
+class IndividualWithPageSet(Individual):
+    page_sets: list[PageSet]
+
+    def fitness(self) -> float:
+        if self._fitness is None:
+            self._fitness = _fitness(
+                self.schedule,
+                self.profiles,
+                self.cache_capacity_pages,
+                self.page_sets,
+            )
+        return self._fitness
+
+
+def make_individual(
+    schedule: list[int],
+    profiles: list[AccessProfile],
+    cache_capacity_pages: int,
+    rng: random.Random,
+    config: GAConfig,
+    page_sets: Optional[list[PageSet]],
+) -> Individual:
+    if page_sets is not None:
+        return IndividualWithPageSet(
+            schedule=schedule,
+            profiles=profiles,
+            cache_capacity_pages=cache_capacity_pages,
+            _rng=rng,
+            _config=config,
+            page_sets=page_sets,
+        )
+    return Individual(
+        schedule=schedule,
+        profiles=profiles,
+        cache_capacity_pages=cache_capacity_pages,
+        _rng=rng,
+        _config=config,
+    )
+
+
 class GAScheduler(SchedulerBase):
     """
     Genetic algorithm-based query scheduler.
@@ -216,7 +306,7 @@ class GAScheduler(SchedulerBase):
     def schedule(
         self,
         profiles: list[AccessProfile],
-        page_sets: list[set[tuple[str, int]]] | None = None,
+        page_sets: list[PageSet] | None = None,
     ) -> ScheduleResult:
         """
         Run the genetic algorithm to find a cache-friendly query schedule.
@@ -225,7 +315,7 @@ class GAScheduler(SchedulerBase):
         ----------
         profiles : list[AccessProfile]
             One access profile per query.
-        page_sets : list[set[tuple[str, int]]] | None
+        page_sets : list[PageSet] | None
             Per-query page sets from pg_buffercache profiling.  When
             provided, fitness is evaluated at page-level granularity.
 
@@ -247,7 +337,7 @@ def run_ga(
     profiles: list[AccessProfile],
     config: GAConfig | None = None,
     on_generation: Callable[[int, float], None] | None = None,
-    page_sets: list[set[tuple[str, int]]] | None = None,
+    page_sets: list[PageSet] | None = None,
 ) -> ScheduleResult:
     """
     Run the genetic algorithm to find a cache-friendly query schedule.
@@ -266,7 +356,7 @@ def run_ga(
     on_generation : callable or None
         Optional callback invoked as ``on_generation(gen, best_fitness)``
         after each generation completes.
-    page_sets : list[set[tuple[str, int]]] | None
+    page_sets : list[PageSet] | None
         Per-query page sets from pg_buffercache profiling.  When
         provided, fitness is evaluated at page-level granularity.
 
@@ -302,65 +392,55 @@ def run_ga(
             fitness_history=[sim.hit_ratio],
         )
 
-    population: list[list[int]] = []
+    population: list[Individual] = []
     for _ in range(config.population_size):
         perm = list(range(n))
         rng.shuffle(perm)
-        population.append(perm)
-
-    fitnesses = [
-        _fitness(ind, profiles, cache_capacity_pages, page_sets) for ind in population
-    ]
+        population.append(
+            make_individual(
+                schedule=perm,
+                profiles=profiles,
+                cache_capacity_pages=cache_capacity_pages,
+                rng=rng,
+                config=config,
+                page_sets=page_sets,
+            )
+        )
 
     fitness_history: list[float] = []
 
     for gen in range(config.num_generations):
-        ranked = sorted(
-            range(len(population)),
-            key=lambda i: fitnesses[i],
+        ranked: list[Individual] = sorted(
+            population,
+            key=lambda individual: individual.fitness(),
             reverse=True,
         )
-        elites = [
-            list(population[ranked[i]])
-            for i in range(min(config.elite_count, len(population)))
-        ]
+        elites: list[Individual] = ranked[:config.elite_count]
 
-        new_population: list[list[int]] = list(elites)
-        new_fitnesses: list[float] = [
-            fitnesses[ranked[i]] for i in range(len(elites))
-        ]
+        new_population: list[Individual] = list(elites)
 
         while len(new_population) < config.population_size:
             p1 = _tournament_select(
-                population, fitnesses, config.tournament_size, rng,
+                population, config.tournament_size, rng,
             )
             p2 = _tournament_select(
-                population, fitnesses, config.tournament_size, rng,
+                population, config.tournament_size, rng,
             )
 
-            if rng.random() < config.crossover_rate:
-                child = _order_crossover(p1, p2, rng)
-            else:
-                child = list(p1)
+            child = p1 @ p2
 
-            if rng.random() < config.mutation_rate:
-                _swap_mutation(child, rng)
-
-            f = _fitness(child, profiles, cache_capacity_pages, page_sets)
             new_population.append(child)
-            new_fitnesses.append(f)
 
         population = new_population
-        fitnesses = new_fitnesses
 
-        best_gen_fitness = max(fitnesses)
+        best_gen_fitness = max(individual.fitness() for individual in population)
         fitness_history.append(best_gen_fitness)
 
         if on_generation is not None:
             on_generation(gen, best_gen_fitness)
 
-    best_idx = max(range(len(population)), key=lambda i: fitnesses[i])
-    best_schedule = population[best_idx]
+    best_idx = max(range(len(population)), key=lambda i: population[i].fitness())
+    best_schedule = population[best_idx].schedule
     if page_sets is not None:
         best_sim = simulate_schedule_page_level(
             page_sets, best_schedule, cache_capacity_pages,

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Hashable
 
 from src.simulator.access_profile import AccessProfile
+from src.simulator.simulator_types import PageSet
 
 
 @dataclass(frozen=True)
@@ -206,7 +206,7 @@ def simulate_schedule(
 
 
 def simulate_schedule_page_level(
-    page_sets: list[set[tuple[str, int]]],
+    page_sets: list[PageSet],
     schedule: list[int],
     cache_capacity_pages: int,
 ) -> SimulationResult:
@@ -218,7 +218,7 @@ def simulate_schedule_page_level(
 
     Parameters
     ----------
-    page_sets : list[set[tuple[str, int]]]
+    page_sets : list[PageSet]
         Page sets indexed by position.  Each set contains (table, block)
         tuples representing the pages accessed by that query.
     schedule : list[int]
@@ -236,9 +236,9 @@ def simulate_schedule_page_level(
     total_hits = 0
 
     for idx in schedule:
-        for page in page_sets[idx]:
+        page_set = page_sets[idx]
+        for page in page_set:
             total_requests += 1
             if cache.access(page):
                 total_hits += 1
-
     return SimulationResult(total_requests=total_requests, total_hits=total_hits)
