@@ -7,7 +7,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from psycopg import Connection
+from psycopg import Connection, sql
 
 from src.postgres.execute import get_execution_plan
 
@@ -117,7 +117,7 @@ def build_access_profile(
 
 
 def build_access_profiles_from_db(
-    queries: dict[str, str],
+    queries: dict[str, sql.SQL],
     connection: Connection,
     analyze: bool = False,
 ) -> list[AccessProfile]:
@@ -126,7 +126,7 @@ def build_access_profiles_from_db(
 
     Parameters
     ----------
-    queries : dict[str, str]
+    queries : dict[str, SQL]
         Mapping from query_id to SQL text.
     connection : Connection
         Active PostgreSQL connection.
@@ -142,9 +142,9 @@ def build_access_profiles_from_db(
         with a warning.
     """
     profiles: list[AccessProfile] = []
-    for query_id, sql in queries.items():
+    for query_id, query in queries.items():
         try:
-            plan = get_execution_plan(sql, connection, analyze=analyze)
+            plan = get_execution_plan(query, connection, analyze=analyze)
         except RuntimeError as exc:
             logger.warning("Skipping %s: %s", query_id, exc)
             continue

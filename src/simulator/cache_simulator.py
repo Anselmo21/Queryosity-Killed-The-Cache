@@ -4,6 +4,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from src.simulator.access_profile import AccessProfile
+from src.simulator.simulator_types import PageSet
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,53 @@ class LRUCache:
         self._used = 0
 
 
+class PageLRUCache:
+    """
+    Fixed-capacity LRU cache operating at individual page granularity.
+
+    Each entry is a single (table, block_number) page.  Capacity is
+    measured in pages.
+
+    Parameters
+    ----------
+    capacity_pages : int
+        Maximum number of pages the cache can hold.
+    """
+
+    def __init__(self, capacity_pages: int) -> None:
+        if capacity_pages < 0:
+            raise ValueError("capacity_pages must be non-negative")
+        self.capacity = capacity_pages
+        self._entries: OrderedDict[tuple[str, int], None] = OrderedDict()
+
+    def access(self, page: tuple[str, int]) -> bool:
+        """
+        Access a page in the cache.
+
+        Parameters
+        ----------
+        page : tuple[str, int]
+            (table_name, block_number) identifying the page.
+
+        Returns
+        -------
+        bool
+            True if the page was already cached (hit), False otherwise.
+        """
+        if page in self._entries:
+            self._entries.move_to_end(page)
+            return True
+
+        while len(self._entries) >= self.capacity:
+            self._entries.popitem(last=False)
+
+        self._entries[page] = None
+        return False
+
+    def reset(self) -> None:
+        self._entries.clear()
+
+
 def simulate_schedule(
     profiles: list[AccessProfile],
     schedule: list[int],
@@ -154,4 +202,43 @@ def simulate_schedule(
             if cache.access(table, pages):
                 total_hits += pages
 
+    return SimulationResult(total_requests=total_requests, total_hits=total_hits)
+
+
+def simulate_schedule_page_level(
+    page_sets: list[PageSet],
+    schedule: list[int],
+    cache_capacity_pages: int,
+) -> SimulationResult:
+    """
+    Simulate executing queries through a page-level LRU cache.
+
+    Uses actual (table, block) page sets captured from pg_buffercache
+    instead of table-level estimates.
+
+    Parameters
+    ----------
+    page_sets : list[PageSet]
+        Page sets indexed by position.  Each set contains (table, block)
+        tuples representing the pages accessed by that query.
+    schedule : list[int]
+        Permutation of ``range(len(page_sets))`` specifying execution order.
+    cache_capacity_pages : int
+        LRU cache capacity in pages.
+
+    Returns
+    -------
+    SimulationResult
+        Aggregate page request and cache hit counts.
+    """
+    cache = PageLRUCache(cache_capacity_pages)
+    total_requests = 0
+    total_hits = 0
+
+    for idx in schedule:
+        page_set = page_sets[idx]
+        for page in page_set:
+            total_requests += 1
+            if cache.access(page):
+                total_hits += 1
     return SimulationResult(total_requests=total_requests, total_hits=total_hits)

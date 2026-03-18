@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from psycopg import Connection
+from psycopg import Connection, sql
 
 
 def execute_query(
-    query: str,
+    query: sql.SQL,
     connection: Connection,
     fetch_results: bool,
 ) -> list[Any] | None:
@@ -48,7 +48,7 @@ def execute_query(
 
 
 def get_execution_plan(
-    query: str,
+    query: sql.SQL,
     connection: Connection,
     analyze: bool,
 ) -> dict[str, Any]:
@@ -57,7 +57,7 @@ def get_execution_plan(
 
     Parameters
     ----------
-    query : str
+    query : SQL
         SQL query to explain.
     connection : Connection
         Active PostgreSQL connection.
@@ -75,11 +75,10 @@ def get_execution_plan(
     RuntimeError
         If the execution plan cannot be retrieved.
     """
-    explain_sql = (
-        f"EXPLAIN (ANALYZE, FORMAT JSON) {query}"
-        if analyze
-        else f"EXPLAIN (FORMAT JSON) {query}"
-    )
+    if analyze:
+        explain_sql = sql.SQL("EXPLAIN (ANALYZE, FORMAT JSON) {}").format(query)
+    else:
+        explain_sql = sql.SQL("EXPLAIN (FORMAT JSON) {}").format(query)
 
     try:
         with connection.cursor() as cursor:

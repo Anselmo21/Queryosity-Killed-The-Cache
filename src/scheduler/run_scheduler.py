@@ -25,7 +25,12 @@ logging.basicConfig(level=logging.WARNING)
 from src.postgres.connection import close_connection, create_connection
 from src.scheduler.genetic_algorithm import GAConfig, GAScheduler
 from src.simulator.access_profile import build_access_profiles_from_db
-from src.simulator.cache_simulator import simulate_schedule
+from src.profiler.page_profiler import load_all_page_access
+from src.simulator.cache_simulator import (
+    simulate_schedule,
+    simulate_schedule_page_level,
+)
+from src.simulator.simulator_types import PageSet, QueryPageCount
 from src.utilities.configurations import (
     BASELINE_SEED,
     PG_HOST,
@@ -35,7 +40,7 @@ from src.utilities.configurations import (
     PG_STATEMENT_TIMEOUT_MS,
     PG_USER,
 )
-from src.utilities.constants import DB_DEFAULTS, WORKLOAD_DIRS
+from src.utilities.constants import DB_DEFAULTS, PROJECT_ROOT, WORKLOAD_DIRS
 from src.utilities.workload import load_queries
 
 
@@ -44,6 +49,7 @@ def _print_schedule(
     schedule: list[int],
     cache_pages: int,
     label: str,
+    page_sets: list[PageSet] | None = None,
 ) -> float:
     """
     Simulate a schedule and print its fitness summary.
@@ -58,13 +64,18 @@ def _print_schedule(
         LRU cache capacity in pages.
     label : str
         Header label for the printed output.
+    page_sets : list[PageSet] | None
+        Per-query page sets for page-level simulation.
 
     Returns
     -------
     float
         Cache hit ratio for the schedule.
     """
-    sim = simulate_schedule(profiles, schedule, cache_pages)
+    if page_sets is not None:
+        sim = simulate_schedule_page_level(page_sets, schedule, cache_pages)
+    else:
+        sim = simulate_schedule(profiles, schedule, cache_pages)
     ids = [profiles[i].query_id for i in schedule]
     print(f"\n{label}")
     print(f"  Order : {' → '.join(ids)}")
@@ -162,11 +173,37 @@ def main(argv: list[str] | None = None) -> None:
     finally:
         close_connection(conn)
 
+    # Load page-level access data if available
+    page_access_dir = PROJECT_ROOT / "page_access" / args.workload
+    page_sets: list[PageSet] | None = None
+
+    if page_access_dir.is_dir() and any(page_access_dir.glob("*.csv")):
+        print(f"\nLoading page access data from {page_access_dir}…")
+        all_pages = load_all_page_access(page_access_dir)
+        # Build page_sets aligned with profiles order
+        page_sets = []
+        for profile in profiles:
+            if profile.query_id in all_pages:
+                query_pages = all_pages[profile.query_id]
+                page_sets.append(set(
+                    QueryPageCount(*query_page) for query_page in query_pages
+                ))
+            else:
+                print(f"  WARNING: no page access data for {profile.query_id}, using empty set")
+                page_sets.append(set())
+        print(f"  Loaded page data for {sum(1 for p in page_sets if p):,} / {len(profiles)} queries")
+        print(f"  Total unique pages: {sum(len(p) for p in page_sets):,}")
+        print("  Using PAGE-LEVEL simulation")
+    else:
+        print("\n  No page access data found — using TABLE-LEVEL simulation")
+        print(f"  (Run 'python -m src.profiler.run_profiler --workload {args.workload}' to generate)")
+
     rng = random.Random(BASELINE_SEED)
     random_schedule = list(range(len(profiles)))
     rng.shuffle(random_schedule)
     baseline_fitness = _print_schedule(
         profiles, random_schedule, args.cache_pages, "Baseline (random order)",
+        page_sets=page_sets,
     )
 
     # Build the scheduler based on --algorithm
@@ -192,12 +229,13 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError(f"Unknown algorithm: {args.algorithm}")
 
     t0 = time.perf_counter()
-    result = scheduler.schedule(profiles)
+    result = scheduler.schedule(profiles, page_sets=page_sets)
     elapsed = time.perf_counter() - t0
     print(f"  Finished in {elapsed:.1f}s")
 
     ga_fitness = _print_schedule(
         profiles, result.best_schedule, args.cache_pages, "Best schedule",
+        page_sets=page_sets,
     )
 
     improvement = ga_fitness - baseline_fitness
