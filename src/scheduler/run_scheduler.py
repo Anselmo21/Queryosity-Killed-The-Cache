@@ -27,6 +27,7 @@ from src.scheduler.genetic_algorithm import GAConfig, GAScheduler
 from src.simulator.access_profile import build_access_profiles_from_db
 from src.profiler.page_profiler import load_all_page_access
 from src.simulator.cache_simulator import (
+    encode_page_sets,
     simulate_schedule,
     simulate_schedule_page_level,
 )
@@ -48,7 +49,7 @@ def _print_schedule(
     schedule: list[int],
     cache_pages: int,
     label: str,
-    page_sets: list[set[tuple[str, int]]] | None = None,
+    page_sets: list[list[int]] | None = None,
 ) -> float:
     """
     Simulate a schedule and print its fitness summary.
@@ -63,8 +64,8 @@ def _print_schedule(
         LRU cache capacity in pages.
     label : str
         Header label for the printed output.
-    page_sets : list[set[tuple[str, int]]] | None
-        Per-query page sets for page-level simulation.
+    page_sets : list[list[int]] | None
+        Integer-encoded page lists for page-level simulation.
 
     Returns
     -------
@@ -174,22 +175,23 @@ def main(argv: list[str] | None = None) -> None:
 
     # Load page-level access data if available
     page_access_dir = PROJECT_ROOT / "page_access" / args.workload
-    page_sets: list[set[tuple[str, int]]] | None = None
+    page_lists: list[list[int]] | None = None
 
     if page_access_dir.is_dir() and any(page_access_dir.glob("*.csv")):
         print(f"\nLoading page access data from {page_access_dir}…")
         all_pages = load_all_page_access(page_access_dir)
         # Build page_sets aligned with profiles order
-        page_sets = []
+        raw_page_sets: list[set[tuple[str, int]]] = []
         for profile in profiles:
             if profile.query_id in all_pages:
-                page_sets.append(all_pages[profile.query_id])
+                raw_page_sets.append(all_pages[profile.query_id])
             else:
                 print(f"  WARNING: no page access data for {profile.query_id}, using empty set")
-                page_sets.append(set())
-        print(f"  Loaded page data for {sum(1 for p in page_sets if p):,} / {len(profiles)} queries")
-        print(f"  Total unique pages: {sum(len(p) for p in page_sets):,}")
-        print("  Using PAGE-LEVEL simulation")
+                raw_page_sets.append(set())
+        page_lists, page_to_id = encode_page_sets(raw_page_sets)
+        print(f"  Loaded page data for {sum(1 for p in page_lists if p):,} / {len(profiles)} queries")
+        print(f"  Total unique pages: {len(page_to_id):,}")
+        print("  Using PAGE-LEVEL simulation (integer-encoded)")
     else:
         print("\n  No page access data found — using TABLE-LEVEL simulation")
         print(f"  (Run 'python -m src.profiler.run_profiler --workload {args.workload}' to generate)")
@@ -199,7 +201,7 @@ def main(argv: list[str] | None = None) -> None:
     rng.shuffle(random_schedule)
     baseline_fitness = _print_schedule(
         profiles, random_schedule, args.cache_pages, "Baseline (random order)",
-        page_sets=page_sets,
+        page_sets=page_lists,
     )
 
     # Build the scheduler based on --algorithm
@@ -225,13 +227,13 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError(f"Unknown algorithm: {args.algorithm}")
 
     t0 = time.perf_counter()
-    result = scheduler.schedule(profiles, page_sets=page_sets)
+    result = scheduler.schedule(profiles, page_lists=page_lists)
     elapsed = time.perf_counter() - t0
     print(f"  Finished in {elapsed:.1f}s")
 
     ga_fitness = _print_schedule(
         profiles, result.best_schedule, args.cache_pages, "Best schedule",
-        page_sets=page_sets,
+        page_sets=page_lists,
     )
 
     improvement = ga_fitness - baseline_fitness
