@@ -3,7 +3,16 @@ Genetic algorithm-based query scheduler.
 
 Uses tournament selection, order crossover (OX), swap mutation, and
 elitism to evolve a population of query permutations that maximise
-the simulated LRU cache hit ratio.
+the simulated clock-sweep cache hit ratio.
+
+Optimisations
+-------------
+* **Fitness memoization** — identical permutations (from elitism or
+  convergent crossover) are not re-evaluated.
+* **Approximate fitness via overlap matrix** — when page-level data is
+  available, a precomputed pairwise overlap matrix reduces per-eval
+  cost from O(total_pages) to O(n_queries · w).  The exact clock-sweep
+  simulation is still used for the final best schedule.
 """
 
 from __future__ import annotations
@@ -21,6 +30,8 @@ from src.scheduler.genetic_utils import (
 from src.simulator.access_profile import AccessProfile
 from src.simulator.cache_simulator import (
     SimulationResult,
+    approximate_schedule_fitness,
+    compute_overlap_matrix,
     simulate_schedule,
     simulate_schedule_page_level,
 )
@@ -46,9 +57,14 @@ class GAConfig:
     elite_count : int
         Number of top individuals preserved unchanged across generations.
     cache_capacity_pages : int
-        LRU cache capacity in 8 KB pages used for fitness evaluation.
+        Clock-sweep cache capacity in 8 KB pages used for fitness evaluation.
     seed : int | None
         Random seed for reproducibility.  None means non-deterministic.
+    use_approximate_fitness : bool
+        When True and page-level data is available, use the precomputed
+        overlap matrix for fast approximate fitness during evolution.
+        The final best schedule is always validated with the exact
+        clock-sweep simulation.
     """
 
     population_size: int = 100
@@ -59,19 +75,18 @@ class GAConfig:
     elite_count: int = 2
     cache_capacity_pages: int = 1000
     seed: int | None = None
+    use_approximate_fitness: bool = False
 
 
-def _fitness(
+def _fitness_exact(
     individual: list[int],
     profiles: list[AccessProfile],
     cache_capacity_pages: int,
-    page_lists: list[list[int]] | None = None,
+    page_sets: list[frozenset[int]] | None = None,
 ) -> float:
     """
-    Evaluate the cache hit-ratio fitness of an individual.
-
-    When page_lists are provided, uses page-level LRU simulation.
-    Otherwise falls back to table-level simulation.
+    Evaluate the cache hit-ratio fitness of an individual using exact
+    clock-sweep simulation.
 
     Parameters
     ----------
@@ -80,18 +95,18 @@ def _fitness(
     profiles : list[AccessProfile]
         Access profiles for each query, indexed by query index.
     cache_capacity_pages : int
-        LRU cache capacity in 8 KB pages.
-    page_lists : list[list[int]] | None
-        Integer-encoded page lists from pg_buffercache profiling.
+        Cache capacity in 8 KB pages.
+    page_sets : list[frozenset[int]] | None
+        Integer-encoded page sets from pg_buffercache profiling.
 
     Returns
     -------
     float
         Cache hit ratio in the range [0.0, 1.0].
     """
-    if page_lists is not None:
+    if page_sets is not None:
         result = simulate_schedule_page_level(
-            page_lists, individual, cache_capacity_pages,
+            page_sets, individual, cache_capacity_pages,
         )
     else:
         result = simulate_schedule(profiles, individual, cache_capacity_pages)
@@ -199,7 +214,7 @@ class GAScheduler(SchedulerBase):
 
     Uses tournament selection, order crossover, swap mutation, and
     elitism to evolve a population of query permutations that maximise
-    the simulated LRU cache hit ratio.
+    the simulated clock-sweep cache hit ratio.
 
     Parameters
     ----------
@@ -221,7 +236,7 @@ class GAScheduler(SchedulerBase):
     def schedule(
         self,
         profiles: list[AccessProfile],
-        page_lists: list[list[int]] | None = None,
+        page_sets: list[frozenset[int]] | None = None,
     ) -> ScheduleResult:
         """
         Run the genetic algorithm to find a cache-friendly query schedule.
@@ -230,8 +245,8 @@ class GAScheduler(SchedulerBase):
         ----------
         profiles : list[AccessProfile]
             One access profile per query.
-        page_lists : list[list[int]] | None
-            Integer-encoded page lists from pg_buffercache profiling.
+        page_sets : list[frozenset[int]] | None
+            Integer-encoded page sets from pg_buffercache profiling.
             When provided, fitness is evaluated at page-level granularity.
 
         Returns
@@ -244,7 +259,7 @@ class GAScheduler(SchedulerBase):
             profiles,
             self.config,
             on_generation=self.on_generation,
-            page_lists=page_lists,
+            page_sets=page_sets,
         )
 
 
@@ -252,14 +267,20 @@ def run_ga(
     profiles: list[AccessProfile],
     config: GAConfig | None = None,
     on_generation: Callable[[int, float], None] | None = None,
-    page_lists: list[list[int]] | None = None,
+    page_sets: list[frozenset[int]] | None = None,
 ) -> ScheduleResult:
     """
     Run the genetic algorithm to find a cache-friendly query schedule.
 
     Evolves a population of permutations using tournament selection,
     order crossover, swap mutation, and elitism.  Fitness is the cache
-    hit ratio obtained by simulating each schedule through an LRU cache.
+    hit ratio obtained by simulating each schedule through a clock-sweep
+    cache.
+
+    When ``config.use_approximate_fitness`` is True and *page_sets* are
+    provided, the precomputed pairwise overlap matrix is used for fast
+    surrogate fitness during evolution.  The final best schedule is
+    always validated with the exact clock-sweep simulation.
 
     Parameters
     ----------
@@ -271,8 +292,8 @@ def run_ga(
     on_generation : callable or None
         Optional callback invoked as ``on_generation(gen, best_fitness)``
         after each generation completes.
-    page_lists : list[list[int]] | None
-        Integer-encoded page lists from pg_buffercache profiling.  When
+    page_sets : list[frozenset[int]] | None
+        Integer-encoded page sets from pg_buffercache profiling.  When
         provided, fitness is evaluated at page-level granularity.
 
     Returns
@@ -296,8 +317,8 @@ def run_ga(
         )
 
     if n == 1:
-        if page_lists is not None:
-            sim = simulate_schedule_page_level(page_lists, [0], cache_capacity_pages)
+        if page_sets is not None:
+            sim = simulate_schedule_page_level(page_sets, [0], cache_capacity_pages)
         else:
             sim = simulate_schedule(profiles, [0], cache_capacity_pages)
         return ScheduleResult(
@@ -307,18 +328,47 @@ def run_ga(
             fitness_history=[sim.hit_ratio],
         )
 
-    population: list[Individual] = []
+    # --- Precompute overlap matrix for approximate fitness ----------------
+    use_approx = config.use_approximate_fitness and page_sets is not None
+    overlap_matrix: list[list[int]] | None = None
+    page_counts: list[int] | None = None
+    if use_approx:
+        overlap_matrix = compute_overlap_matrix(page_sets)
+        page_counts = [len(ps) for ps in page_sets]
+
+    # --- Fitness evaluation with memoization ------------------------------
+    fitness_cache: dict[tuple[int, ...], float] = {}
+
+    def evaluate(individual: list[int]) -> float:
+        """Evaluate fitness with memoization."""
+        key = tuple(individual)
+        cached = fitness_cache.get(key)
+        if cached is not None:
+            return cached
+
+        if use_approx:
+            f = approximate_schedule_fitness(
+                overlap_matrix, page_counts, individual, cache_capacity_pages,
+            )
+        else:
+            f = _fitness_exact(
+                individual, profiles, cache_capacity_pages, page_sets,
+            )
+        fitness_cache[key] = f
+        return f
+
+    # --- Initial population -----------------------------------------------
+    population: list[list[int]] = []
     for _ in range(config.population_size):
         perm = list(range(n))
         rng.shuffle(perm)
         population.append(perm)
 
-    fitnesses = [
-        _fitness(ind, profiles, cache_capacity_pages, page_lists) for ind in population
-    ]
+    fitnesses = [evaluate(ind) for ind in population]
 
     fitness_history: list[float] = []
 
+    # --- Evolution loop ---------------------------------------------------
     for gen in range(config.num_generations):
         ranked: list[Individual] = sorted(
             population,
@@ -346,7 +396,7 @@ def run_ga(
             if rng.random() < config.mutation_rate:
                 _swap_mutation(child, rng)
 
-            f = _fitness(child, profiles, cache_capacity_pages, page_lists)
+            f = evaluate(child)
             new_population.append(child)
 
         population = new_population
@@ -357,11 +407,12 @@ def run_ga(
         if on_generation is not None:
             on_generation(gen, best_gen_fitness)
 
+    # --- Final result (always exact simulation) ---------------------------
     best_idx = max(range(len(population)), key=lambda i: fitnesses[i])
     best_schedule = population[best_idx]
-    if page_lists is not None:
+    if page_sets is not None:
         best_sim = simulate_schedule_page_level(
-            page_lists, best_schedule, cache_capacity_pages,
+            page_sets, best_schedule, cache_capacity_pages,
         )
     else:
         best_sim = simulate_schedule(
