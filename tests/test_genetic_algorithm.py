@@ -3,12 +3,12 @@ from typing import cast
 
 from src.simulator.access_profile import AccessProfile
 from src.simulator.cache_simulator import simulate_schedule
-from src.scheduler.genetic_algorithm import (
-    GAConfig,
+from src.scheduler.genetic_algorithm import run_ga
+from src.scheduler.genetic_config import GAConfig
+from src.scheduler.genetic_utils import (
     _order_crossover,
     _swap_mutation,
     _tournament_select,
-    run_ga,
     Individual
 )
 import random
