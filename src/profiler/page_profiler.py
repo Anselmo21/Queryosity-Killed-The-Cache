@@ -14,7 +14,7 @@ import logging
 import time
 from pathlib import Path
 
-from psycopg import Connection
+from psycopg import Connection, sql
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,7 @@ ORDER BY c.relname, b.relblocknumber;
 
 
 def profile_query(
-    query_id: str,
-    sql: str,
+    query: sql.SQL,
     connection: Connection,
 ) -> list[tuple[str, int]]:
     """
@@ -42,9 +41,7 @@ def profile_query(
 
     Parameters
     ----------
-    query_id : str
-        Identifier for the query.
-    sql : str
+    query : SQL
         SQL text to execute.
     connection : Connection
         Active PostgreSQL connection.
@@ -57,7 +54,9 @@ def profile_query(
     """
     t0 = time.perf_counter()
     with connection.cursor() as cur:
-        cur.execute(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}")
+        cur.execute(
+            sql.SQL("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {}").format(query)
+        )
         cur.fetchone()
     elapsed = time.perf_counter() - t0
     print(f"    Query executed in {elapsed:.1f}s")

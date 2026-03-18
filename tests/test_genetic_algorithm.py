@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from typing import cast
+
 from src.simulator.access_profile import AccessProfile
 from src.simulator.cache_simulator import simulate_schedule
 from src.scheduler.genetic_algorithm import (
@@ -6,8 +9,18 @@ from src.scheduler.genetic_algorithm import (
     _swap_mutation,
     _tournament_select,
     run_ga,
+    Individual
 )
 import random
+
+
+@dataclass
+class IndividualMock:
+    schedule: list[int]
+    _fitness: float
+
+    def fitness(self):
+        return self._fitness
 
 
 class TestOrderCrossover:
@@ -50,20 +63,30 @@ class TestSwapMutation:
 class TestTournamentSelect:
     def test_selects_from_population(self):
         rng = random.Random(42)
-        pop = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]
+        scheds = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]
         fits = [0.1, 0.5, 0.3]
-        selected = _tournament_select(pop, fits, k=2, rng=rng)
-        assert sorted(selected) == [0, 1, 2]
+        pop = [
+            IndividualMock(schedule=sched, _fitness=fit)
+            for sched, fit in zip(scheds, fits)
+        ]
+        pop = cast(list[Individual], pop)
+        selected = _tournament_select(pop, k=2, rng=rng)
+        assert sorted(selected.schedule) == [0, 1, 2]
 
     def test_prefers_fitter(self):
         rng = random.Random(42)
-        pop = [[0, 1], [1, 0]]
+        scheds = [[0, 1], [1, 0]]
         fits = [0.0, 1.0]
+        pop = [
+            IndividualMock(schedule=sched, _fitness=fit)
+            for sched, fit in zip(scheds, fits)
+        ]
+        pop = cast(list[Individual], pop)
         # Over many trials, individual 1 (fitness=1.0) should win most
         wins = sum(
             1
             for _ in range(100)
-            if _tournament_select(pop, fits, k=2, rng=rng) == [1, 0]
+            if _tournament_select(pop, k=2, rng=rng).schedule == [1, 0]
         )
         assert wins > 60
 

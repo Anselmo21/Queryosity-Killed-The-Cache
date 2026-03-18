@@ -5,11 +5,14 @@ Workload loading utilities shared across scheduler and executor.
 from __future__ import annotations
 
 import re
+from typing import cast, LiteralString
+
+from psycopg import sql
 
 from src.utilities.constants import WORKLOAD_DIRS
 
 
-def load_queries(workload: str) -> dict[str, str]:
+def load_queries(workload: str) -> dict[str, sql.SQL]:
     """
     Load all SQL queries from the workload directory.
 
@@ -20,7 +23,7 @@ def load_queries(workload: str) -> dict[str, str]:
 
     Returns
     -------
-    dict[str, str]
+    dict[str, SQL]
         Mapping from query identifier (file stem) to SQL text.
 
     Raises
@@ -43,7 +46,7 @@ def load_queries(workload: str) -> dict[str, str]:
     if not files:
         raise FileNotFoundError(f"No .sql files found in {directory}")
 
-    queries: dict[str, str] = {}
+    queries: dict[str, sql.SQL] = {}
     for f in files:
-        queries[f.stem] = f.read_text()
+        queries[f.stem] = sql.SQL(f.read_text()) # type: ignore
     return queries
