@@ -13,16 +13,20 @@
 # ---
 
 # %%
+from dataclasses import dataclass
 import random
 import sys
-from typing import Sequence as Seq
+from typing import Dict, List, Optional, Sequence as Seq
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch import Tensor
+from tqdm import tqdm
 
 sys.path.insert(0, "..")
 from src.simulator.cache_simulator import LRUCache
@@ -62,9 +66,9 @@ close_connection(conn)
 def build_state(
     cache: LRUCache,
     query_profile: AccessProfile,
-    all_tables: list[str],
-    max_pages: dict[str, int]
-) -> list[float]:
+    all_tables: List[str],
+    max_pages: Dict[str, int]
+) -> List[float]:
     buffer_vec = [
         cache._entries.get(t, 0) / max_pages[t] for t in all_tables
     ]
@@ -76,13 +80,30 @@ def build_state(
 
 
 # %%
-def collect_transitions(profiles: list[AccessProfile], cache_capacity_pages: int, num_episodes=500):
+@dataclass
+class Transition:
+    state: Tensor # (n,)
+    reward: Tensor # (1,)
+    next_states: Tensor # (b, n)
+
+@dataclass
+class TransitionInfo:
+    transitions: List[Transition]
+    all_tables: List[str]
+    max_pages: Dict[str, int]
+
+def collect_transitions(
+    profiles: List[AccessProfile],
+    cache_capacity_pages: int,
+    num_episodes: int = 500,
+    device: Optional[torch.device] = None
+) -> TransitionInfo:
     all_tables = list(set(t for p in profiles for t in p.table_pages))
     max_pages = {
         t: max(p.table_pages.get(t, 0) for p in profiles)
         for t in all_tables
     }
-    transitions = []
+    transitions: List[Transition] = []
 
     for _ in range(num_episodes):
         cache = LRUCache(cache_capacity_pages)
@@ -119,13 +140,17 @@ def collect_transitions(profiles: list[AccessProfile], cache_capacity_pages: int
                 for idx in queue
             ]
 
-            transitions.append({
-                'state': chosen_state,
-                'reward': reward,
-                'next_states': next_candidates,
-            })
+            transitions.append(Transition(
+                state = torch.tensor(chosen_state, dtype=torch.float32, device=device),
+                reward = torch.tensor(reward, dtype=torch.float32, device=device),
+                next_states = torch.tensor(next_candidates, dtype=torch.float32, device=device),
+            ))
 
-    return transitions, all_tables, max_pages
+    return TransitionInfo(
+        transitions=transitions,
+        all_tables=all_tables,
+        max_pages=max_pages,
+    )
 
 
 # %%
@@ -145,95 +170,172 @@ class DQN(nn.Module):
 
 
 # %%
+@dataclass
+class TrainingHistory:
+    epoch: List[int]
+    loss: List[float]
+    mean_q: List[float]
+    mean_reward: List[float]
+
+    def to_dataframe(self) -> pd.DataFrame:
+        return pd.DataFrame({
+            'epoch': self.epoch,
+            'loss': self.loss,
+            'mean_q': self.mean_q,
+            'mean_reward': self.mean_reward,
+        })
+
 def train(
     dqn: nn.Module,
-    transitions,
+    transitions: List[Transition],
     epochs: int = 50,
     gamma: float = 0.95,
     lr: float = 1e-3,
-    device: torch.device | None = None
-):
+) -> TrainingHistory:
     optimizer = torch.optim.Adam(dqn.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
 
-    history = {
-        'epoch': [],
-        'loss': [],
-        'mean_q': [],
-        'mean_reward': [],
-    }
+    history: TrainingHistory = TrainingHistory(
+        epoch = [],
+        loss = [],
+        mean_q = [],
+        mean_reward = [],
+    )
+
+    iteration_counter = 0
+    pbar = tqdm(total=epochs)
 
     for epoch in range(epochs):
         random.shuffle(transitions)
         total_loss = 0.0
+        current_loss: float = 0.0
+        previous_loss: Optional[float] = None
         total_q = 0.0
         total_reward = 0.0
 
         for t in transitions:
-            state = torch.tensor(t['state'], dtype=torch.float32).to(device)
-            reward = t['reward']
+            state = t.state
+            reward = t.reward
 
-            # Bellman target
-            if t['next_states']:
-                with torch.no_grad():
-                    next_qs = [dqn(torch.tensor(s, dtype=torch.float32).to(device)) for s in t['next_states']]
-                    max_next_q = max(q.item() for q in next_qs)
-                target = reward + gamma * max_next_q
+            if len(t.next_states.shape) == 1:
+                target = reward # Terminal state
             else:
-                target = reward  # terminal state
+                with torch.no_grad():
+                    next_qs: Tensor = dqn(t.next_states)
+                    max_next_q = next_qs.max()
+                target = reward + gamma * max_next_q
 
             predicted: Tensor = dqn(state)
             predicted = predicted.squeeze()
-            target_tensor = torch.tensor(target, dtype=torch.float32).to(device)
-            loss: Tensor = loss_fn(predicted, target_tensor)
+            loss: Tensor = loss_fn(predicted, target)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
+
+            previous_loss = current_loss
+            current_loss = loss.item()
+            total_loss += current_loss
             total_q += predicted.item()
-            total_reward += reward
+            total_reward += reward.item()
 
         n = len(transitions)
-        history['epoch'].append(epoch + 1)
-        history['loss'].append(total_loss / n)
-        history['mean_q'].append(total_q / n)
-        history['mean_reward'].append(total_reward / n)
+        iteration_counter += 1
+        history.epoch.append(epoch)
+        history.loss.append(total_loss / n)
+        history.mean_q.append(total_q / n)
+        history.mean_reward.append(total_reward / n)
 
-        print(f"Epoch {epoch+1}: loss = {total_loss / len(transitions):.4f}")
+        pbar.update(1)
+        pbar.set_description(f'Epoch {epoch+1}')
+        pbar.set_postfix(
+            avg_loss=f'{total_loss / len(transitions):.4e}',
+            loss=f'{current_loss:.4e}',
+            previous_loss=f'{previous_loss:.4e}',
+        )
     return history
 
 
 # %%
-transitions, all_tables, max_pages = collect_transitions(profiles, 100)
-
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = DQN(input_size=len(all_tables)*2)
+print(f'Using device: {device}')
+
+# %%
+transition_info = collect_transitions(profiles, 100, device=device)
+transitions = transition_info.transitions
+all_tables = transition_info.all_tables
+max_pages = transition_info.max_pages
+
+input_size = len(all_tables)*2
+model = DQN(input_size=input_size)
 model = model.to(device)
 
 history = train(
     dqn=model,
     transitions=transitions,
     epochs=10,
-    device=device
 )
 
 # %%
-fig: Figure
-axes: Seq[Axes]
-fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+fig: Figure; axes: Seq[Seq[Axes]]
+n_rows = 2; n_cols = 3
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 4))
 
-axes[0].plot(history['epoch'], history['loss'])
-axes[0].set_title('Loss')
-axes[0].set_xlabel('Epoch')
+df = history.to_dataframe()
 
-axes[1].plot(history['epoch'], history['mean_q'])
-axes[1].set_title('Mean Q-Value')
-axes[1].set_xlabel('Epoch')
+i_to_series = ['loss', 'mean_q', 'mean_reward']
 
-axes[2].plot(history['epoch'], history['mean_reward'])
-axes[2].set_title('Mean Reward')
-axes[2].set_xlabel('Epoch')
+from itertools import product
+
+for i, j in product(range(n_rows), range(n_cols)):
+    series_name = i_to_series[j]
+    x = df['epoch']
+    if i == 0:
+        y = df[series_name]
+        title = series_name
+    elif i == 1:
+        y = np.log10(df[series_name])
+        title = f'log10({series_name})'
+    axes[i][j].plot(x, y)
+    axes[i][j].set_title(title)
+    axes[i][j].set_xlabel('Epoch')
+    axes[i][j].set_ylabel(title)
 
 plt.tight_layout()
 plt.show()
+
+# %%
+model.cpu()
+dummy_input = torch.zeros(1, input_size)
+torch.onnx.export(
+    model,
+    (dummy_input,),
+    'dqn.onnx',
+    input_names=['state'],
+    output_names=['q_value'],
+    dynamic_axes={'state': {0: 'batch_size'}}  # allows variable batch size
+)
+
+# %%
+import onnxruntime as ort
+import numpy as np
+
+session = ort.InferenceSession('dqn.onnx')
+
+def dqn_fitness(schedule, profiles, cache_capacity_pages, session, all_tables, max_pages):
+    cache = LRUCache(cache_capacity_pages)
+    total_q = 0.0
+
+    for idx in schedule:
+        state = np.array(
+            build_state(cache, profiles[idx], all_tables, max_pages),
+            dtype=np.float32
+        ).reshape(1, -1)
+
+        q_value = session.run(['q_value'], {'state': state})[0]
+        total_q += q_value.item()
+
+        for table, pages in profiles[idx].table_pages.items():
+            cache.access(table, pages)
+
+    return total_q
