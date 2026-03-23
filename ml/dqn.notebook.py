@@ -42,6 +42,7 @@ from src.utilities.configurations import (
     PG_USER,
 )
 from src.postgres.connection import close_connection, create_connection
+from src.simulator.dqn_simulator import build_state
 from src.utilities.constants import DB_DEFAULTS, PROJECT_ROOT, WORKLOAD_DIRS
 from src.utilities.workload import load_queries
 
@@ -63,23 +64,6 @@ close_connection(conn)
 
 
 # %%
-def build_state(
-    cache: LRUCache,
-    query_profile: AccessProfile,
-    all_tables: List[str],
-    max_pages: Dict[str, int]
-) -> List[float]:
-    buffer_vec = [
-        cache._entries.get(t, 0) / max_pages[t] for t in all_tables
-    ]
-    query_vec = [
-        query_profile.table_pages.get(t, 0) / max_pages[t]
-        for t in all_tables
-    ]
-    return buffer_vec + query_vec
-
-
-# %%
 @dataclass
 class Transition:
     state: Tensor # (n,)
@@ -98,7 +82,7 @@ def collect_transitions(
     num_episodes: int = 500,
     device: Optional[torch.device] = None
 ) -> TransitionInfo:
-    all_tables = list(set(t for p in profiles for t in p.table_pages))
+    all_tables = sorted(list(set(t for p in profiles for t in p.table_pages)))
     max_pages = {
         t: max(p.table_pages.get(t, 0) for p in profiles)
         for t in all_tables

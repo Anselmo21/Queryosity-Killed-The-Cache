@@ -67,10 +67,12 @@ def build_state(
     """
 
     buffer_vec = [
-        cache._entries.get(t, 0) / max_pages[t] for t in all_tables
+        cache._entries.get(t, 0) / max_pages[t]
+        for t in sorted(all_tables)
     ]
     query_vec = [
-        query_profile.table_pages.get(t, 0) / max_pages[t] for t in all_tables
+        query_profile.table_pages.get(t, 0) / max_pages[t]
+        for t in sorted(all_tables)
     ]
     return buffer_vec + query_vec
 

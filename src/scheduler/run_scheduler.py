@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> None:
         page_sets=page_sets,
     )
 
-    all_tables = list(set(t for p in profiles for t in p.table_pages))
+    all_tables = sorted(list(set(t for p in profiles for t in p.table_pages)))
     max_pages = {
         t: max(p.table_pages.get(t, 0) for p in profiles)
         for t in all_tables
