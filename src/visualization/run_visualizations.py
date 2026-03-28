@@ -41,6 +41,7 @@ def _require(path: Path) -> None:
 def run_scheduler_plots(workload: str) -> None:
     from src.visualization.fitness_curve import plot_fitness_curve
     from src.visualization.overlap_matrix import plot_page_overlap_matrix
+    from src.visualization.cache_sensitivity import plot_cache_sensitivity
 
     profiles_path  = VIZ_DATA_DIR / f"profiles_{workload}.json"
     fitness_path   = VIZ_DATA_DIR / f"fitness_history_{workload}.json"
@@ -71,10 +72,15 @@ def run_scheduler_plots(workload: str) -> None:
     p = plot_page_overlap_matrix(profiles, ga_sched, workload)
     print(f"        → {p}")
 
+    print("  Cache capacity sensitivity…")
+    p = plot_cache_sensitivity(profiles, baseline_sched, ga_sched, workload)
+    print(f"        → {p}")
+
 
 
 def run_executor_plots(workload: str) -> None:
     from src.visualization.per_query_hit_ratio import plot_per_query_hit_ratio
+    from src.visualization.cumulative_io import plot_cumulative_io
 
     baseline_path = VIZ_DATA_DIR / f"baseline_results_{workload}.json"
     ga_path       = VIZ_DATA_DIR / f"ga_results_{workload}.json"
@@ -85,8 +91,12 @@ def run_executor_plots(workload: str) -> None:
     baseline_results = _load(baseline_path)
     ga_results       = _load(ga_path)
 
-    print("  [1/2] Per-query hit ratio…")
+    print("  Per-query hit ratio…")
     p = plot_per_query_hit_ratio(baseline_results, ga_results, workload)
+    print(f"        → {p}")
+
+    print("  Cumulative I/O…")
+    p = plot_cumulative_io(baseline_results, ga_results, workload)
     print(f"        → {p}")
 
 
@@ -100,7 +110,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--scheduler", action="store_true", default=True,
-        help="Generate scheduler plots (fitness, heatmap, overlap, sensitivity)"
+        help="Generate scheduler plots (fitness, heatmap)"
     )
     parser.add_argument(
         "--executor", action="store_true", default=False,
