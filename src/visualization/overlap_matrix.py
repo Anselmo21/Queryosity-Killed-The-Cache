@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 import numpy as np
 
 from src.visualization.style import apply_style, OUTPUT_DIR
@@ -51,9 +52,14 @@ def plot_page_overlap_matrix(
         pages_i  = profiles[i]["table_pages"]
         for j in range(n):
             shared = tables_i & set(profiles[j]["table_pages"].keys())
-            overlap[i, j] = sum(
+            shared_pages = sum(
                 min(pages_i[t], profiles[j]["table_pages"][t]) for t in shared
             )
+            min_total = min(
+                sum(pages_i.values()),
+                sum(profiles[j]["table_pages"].values()),
+            )
+            overlap[i, j] = (shared_pages / min_total * 100) if min_total > 0 else 0.0
 
     order = ga_schedule if ga_schedule is not None else list(range(n))
     overlap_ordered = overlap[np.ix_(order, order)]
