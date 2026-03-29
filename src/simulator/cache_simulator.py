@@ -67,45 +67,6 @@ def encode_page_sets(
 # Simulation result
 # ---------------------------------------------------------------------------
 
-# PostgreSQL caps the per-buffer usage count at 5 (see bufmgr.c).
-MAX_USAGE_COUNT = 5
-
-
-def encode_page_sets(
-    page_sets: list[set[tuple[str, int]]],
-) -> tuple[list[frozenset[int]], dict[tuple[str, int], int]]:
-    """
-    Map (table, block) tuples to contiguous integers for faster hashing.
-
-    Returns frozensets so they can be used directly with
-    ``PageClockSweepCache.batch_access`` and set-intersection operations.
-
-    Parameters
-    ----------
-    page_sets : list[set[tuple[str, int]]]
-        Per-query page sets using (table, block) tuples.
-
-    Returns
-    -------
-    tuple[list[frozenset[int]], dict[tuple[str, int], int]]
-        Integer-encoded page frozensets and the mapping used.
-    """
-    page_to_id: dict[tuple[str, int], int] = {}
-    encoded: list[frozenset[int]] = []
-    for ps in page_sets:
-        int_pages: list[int] = []
-        for page in ps:
-            if page not in page_to_id:
-                page_to_id[page] = len(page_to_id)
-            int_pages.append(page_to_id[page])
-        encoded.append(frozenset(int_pages))
-    return encoded, page_to_id
-
-
-# ---------------------------------------------------------------------------
-# Simulation result
-# ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class SimulationResult:
