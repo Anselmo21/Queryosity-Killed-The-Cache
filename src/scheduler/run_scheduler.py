@@ -6,6 +6,7 @@ Usage
     python -m src.scheduler.run_scheduler --workload tpch
     python -m src.scheduler.run_scheduler --workload tpcds --cache-pages 2000
     python -m src.scheduler.run_scheduler --workload tpch --generations 300 --pop 150 --seed 42
+    python -m src.scheduler.run_scheduler --workload tpcds --approximate
 
 The script connects to PostgreSQL, collects EXPLAIN plans for every query in
 the chosen workload, builds access profiles, runs the selected scheduling
@@ -27,10 +28,10 @@ from src.scheduler.genetic_algorithm import GAConfig, GAScheduler
 from src.simulator.access_profile import build_access_profiles_from_db
 from src.profiler.page_profiler import load_all_page_access
 from src.simulator.cache_simulator import (
+    encode_page_sets,
     simulate_schedule,
     simulate_schedule_page_level,
 )
-from src.simulator.simulator_types import PageSet, QueryPageCount
 from src.utilities.configurations import (
     BASELINE_SEED,
     PG_HOST,
@@ -49,7 +50,7 @@ def _print_schedule(
     schedule: list[int],
     cache_pages: int,
     label: str,
-    page_sets: list[PageSet] | None = None,
+    page_sets: list[frozenset[int]] | None = None,
 ) -> float:
     """
     Simulate a schedule and print its fitness summary.
@@ -61,11 +62,11 @@ def _print_schedule(
     schedule : list[int]
         Permutation of query indices.
     cache_pages : int
-        LRU cache capacity in pages.
+        Cache capacity in pages.
     label : str
         Header label for the printed output.
-    page_sets : list[PageSet] | None
-        Per-query page sets for page-level simulation.
+    page_sets : list[frozenset[int]] | None
+        Integer-encoded page sets for page-level simulation.
 
     Returns
     -------
@@ -104,7 +105,7 @@ def main(argv: list[str] | None = None) -> None:
         "--cache-pages",
         type=int,
         default=1000,
-        help="LRU cache capacity in 8 KB pages (default: 1000)",
+        help="Cache capacity in 8 KB pages (default: 1000)",
     )
     parser.add_argument(
         "--algorithm",
@@ -129,6 +130,12 @@ def main(argv: list[str] | None = None) -> None:
         type=int,
         default=None,
         help="Random seed for reproducibility (default: None)",
+    )
+    parser.add_argument(
+        "--approximate",
+        action="store_true",
+        help="Use overlap-matrix approximate fitness during GA evolution "
+             "(faster, final result still uses exact simulation)",
     )
     parser.add_argument("--host", default=PG_HOST)
     parser.add_argument("--port", type=int, default=PG_PORT)
@@ -175,25 +182,23 @@ def main(argv: list[str] | None = None) -> None:
 
     # Load page-level access data if available
     page_access_dir = PROJECT_ROOT / "page_access" / args.workload
-    page_sets: list[PageSet] | None = None
+    page_sets: list[frozenset[int]] | None = None
 
     if page_access_dir.is_dir() and any(page_access_dir.glob("*.csv")):
         print(f"\nLoading page access data from {page_access_dir}…")
         all_pages = load_all_page_access(page_access_dir)
         # Build page_sets aligned with profiles order
-        page_sets = []
+        raw_page_sets: list[set[tuple[str, int]]] = []
         for profile in profiles:
             if profile.query_id in all_pages:
-                query_pages = all_pages[profile.query_id]
-                page_sets.append(set(
-                    QueryPageCount(*query_page) for query_page in query_pages
-                ))
+                raw_page_sets.append(all_pages[profile.query_id])
             else:
                 print(f"  WARNING: no page access data for {profile.query_id}, using empty set")
-                page_sets.append(set())
+                raw_page_sets.append(set())
+        page_sets, page_to_id = encode_page_sets(raw_page_sets)
         print(f"  Loaded page data for {sum(1 for p in page_sets if p):,} / {len(profiles)} queries")
-        print(f"  Total unique pages: {sum(len(p) for p in page_sets):,}")
-        print("  Using PAGE-LEVEL simulation")
+        print(f"  Total unique pages: {len(page_to_id):,}")
+        print("  Using PAGE-LEVEL simulation (integer-encoded)")
     else:
         print("\n  No page access data found — using TABLE-LEVEL simulation")
         print(f"  (Run 'python -m src.profiler.run_profiler --workload {args.workload}' to generate)")
@@ -213,7 +218,10 @@ def main(argv: list[str] | None = None) -> None:
             num_generations=args.generations,
             cache_capacity_pages=args.cache_pages,
             seed=args.seed,
+            use_approximate_fitness=args.approximate,
         )
+
+        mode = "approximate" if ga_config.use_approximate_fitness else "exact"
 
         def on_gen(gen: int, best: float) -> None:
             if gen % 50 == 0 or gen == ga_config.num_generations - 1:
@@ -223,7 +231,8 @@ def main(argv: list[str] | None = None) -> None:
 
         print(
             f"\nRunning GA  "
-            f"(pop={ga_config.population_size}, gens={ga_config.num_generations})…"
+            f"(pop={ga_config.population_size}, gens={ga_config.num_generations}, "
+            f"fitness={mode})…"
         )
     else:
         raise ValueError(f"Unknown algorithm: {args.algorithm}")

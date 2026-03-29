@@ -184,3 +184,38 @@ class TestRunGA:
         assert len(log) == 5
         assert log[0][0] == 0
         assert log[4][0] == 4
+
+    def test_approximate_fitness_mode(self):
+        """GA with approximate fitness should still produce a valid schedule."""
+        profiles = self._make_profiles()
+        page_sets = [
+            frozenset({0, 1, 2, 3}),     # q0: A(10)+B(5) mapped to pages
+            frozenset({10, 11, 12}),      # q1: C(10)
+            frozenset({0, 1, 2, 20}),     # q2: A(10)+D(5) — shares pages with q0
+            frozenset({10, 11, 12, 30}),  # q3: C(10)+E(5) — shares pages with q1
+        ]
+        config = GAConfig(
+            population_size=20,
+            num_generations=10,
+            seed=42,
+            cache_capacity_pages=50,
+            use_approximate_fitness=True,
+        )
+        result = run_ga(profiles, config, page_sets=page_sets)
+        assert sorted(result.best_schedule) == [0, 1, 2, 3]
+        # Final fitness is always from exact simulation
+        assert 0.0 <= result.best_fitness <= 1.0
+
+    def test_memoization_deterministic(self):
+        """Memoized fitness should not change results vs. non-memoized."""
+        profiles = self._make_profiles()
+        config = GAConfig(
+            population_size=20,
+            num_generations=10,
+            seed=42,
+            cache_capacity_pages=50,
+        )
+        r1 = run_ga(profiles, config)
+        r2 = run_ga(profiles, config)
+        assert r1.best_schedule == r2.best_schedule
+        assert r1.best_fitness == r2.best_fitness

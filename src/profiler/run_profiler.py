@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> None:
         )
 
         try:
-            pages = profile_query(sql, conn)
+            pages = profile_query(query_id, sql, conn)
             path = save_page_access(query_id, pages, output_dir)
             print(f"    Saved to {path}")
         except Exception as exc:

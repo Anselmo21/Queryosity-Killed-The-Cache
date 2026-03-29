@@ -37,19 +37,16 @@ from src.simulator.cache_simulator import (
     simulate_schedule,
     simulate_schedule_page_level,
 )
-from src.simulator.simulator_types import PageSet
-
-
 def _fitness(
     individual: list[int],
     profiles: list[AccessProfile],
     cache_capacity_pages: int,
-    page_sets: list[PageSet] | None = None,
+    page_sets: list[frozenset[int]] | None = None,
 ) -> float:
     """
     Evaluate the cache hit-ratio fitness of an individual.
 
-    When page_sets are provided, uses page-level LRU simulation.
+    When page_sets are provided, uses page-level clock-sweep simulation.
     Otherwise falls back to table-level simulation.
 
     Parameters
@@ -59,9 +56,9 @@ def _fitness(
     profiles : list[AccessProfile]
         Access profiles for each query, indexed by query index.
     cache_capacity_pages : int
-        LRU cache capacity in 8 KB pages.
-    page_sets : list[PageSet] | None
-        Per-query page sets from pg_buffercache profiling.
+        Clock-sweep cache capacity in 8 KB pages.
+    page_sets : list[frozenset[int]] | None
+        Integer-encoded page sets from pg_buffercache profiling.
 
     Returns
     -------
@@ -187,7 +184,7 @@ class Individual:
     profiles : list[AccessProfile]
         Access profiles for each query, indexed by query index.
     cache_capacity_pages : int
-        LRU cache capacity in 8 KB pages used for fitness evaluation.
+        Clock-sweep cache capacity in 8 KB pages used for fitness evaluation.
     _rng : random.Random
         Random number generator instance used for mutation and crossover.
     _config : GAConfig
@@ -294,11 +291,11 @@ class IndividualWithPageSet(Individual):
 
     Attributes
     ----------
-    page_sets : list[PageSet]
-        Per-query page sets used for page-level fitness evaluation.
+    page_sets : list[frozenset[int]]
+        Integer-encoded page sets used for page-level fitness evaluation.
     """
 
-    page_sets: list[PageSet]
+    page_sets: list[frozenset[int]]
 
     def fitness(self) -> float:
         """
@@ -328,7 +325,7 @@ def make_individual(
     cache_capacity_pages: int,
     rng: random.Random,
     config: GAConfig,
-    page_sets: Optional[list[PageSet]],
+    page_sets: Optional[list[frozenset[int]]],
 ) -> Individual:
     """
     Construct an Individual or IndividualWithPageSet depending on inputs.
@@ -345,9 +342,9 @@ def make_individual(
         Random number generator instance.
     config : GAConfig
         Algorithm configuration.
-    page_sets : list[PageSet] or None
-        Per-query page sets for page-level simulation.  If None, an
-        Individual using table-level simulation is returned.
+    page_sets : list[frozenset[int]] or None
+        Integer-encoded page sets for page-level simulation.  If None,
+        an Individual using table-level simulation is returned.
 
     Returns
     -------
