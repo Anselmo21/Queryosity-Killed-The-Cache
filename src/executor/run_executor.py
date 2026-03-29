@@ -43,6 +43,7 @@ from src.utilities.configurations import (
 )
 from src.utilities.constants import DB_DEFAULTS, WORKLOAD_DIRS
 from src.utilities.workload import load_queries
+from src.visualization.serializers import dump_executor_data
 
 
 def flush_buffer_cache(container_name: str) -> None:
@@ -231,6 +232,8 @@ def main(argv: list[str] | None = None) -> None:
         )
         time_diff = result.total_elapsed_ms - baseline.total_elapsed_ms
         print(f"  Time difference       : {time_diff:+.1f} ms")
+        dump_executor_data(baseline, result, workload=args.workload)
+
         print(f"{'─' * 48}\n")
 
 

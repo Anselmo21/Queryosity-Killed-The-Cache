@@ -262,6 +262,9 @@ def main(argv: list[str] | None = None) -> None:
             "  Baseline order was not beaten — consider tuning parameters "
             "or a smaller cache."
         )
+    from src.visualization.serializers import dump_scheduler_data
+    dump_scheduler_data(profiles, result, random_schedule, workload=args.workload)
+    
     print(f"{'─' * 48}\n")
 
 
