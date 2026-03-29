@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from psycopg import Connection
+from psycopg import Connection, sql
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ def _sum_blocks(plan_node: dict[str, Any]) -> tuple[int, int]:
 
 
 def execute_schedule(
-    queries: dict[str, str],
+    queries: dict[str, sql.SQL],
     schedule: list[str],
     connection: Connection,
 ) -> ExecutionResult:
@@ -139,7 +139,7 @@ def execute_schedule(
 
     Parameters
     ----------
-    queries : dict[str, str]
+    queries : dict[str, SQL]
         Mapping from query_id to SQL text.
     schedule : list[str]
         Ordered list of query_ids specifying the execution order.
@@ -159,8 +159,10 @@ def execute_schedule(
 
     for i, query_id in enumerate(schedule, 1):
         print(f"  [{i}/{len(schedule)}] Executing {query_id}…")
-        sql = queries[query_id]
-        explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}"
+        query = queries[query_id]
+        explain_sql = sql.SQL(
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {}"
+        ).format(query)
 
         try:
             with connection.cursor() as cursor:

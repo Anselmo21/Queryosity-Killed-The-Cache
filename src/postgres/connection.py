@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import psycopg
-from psycopg import Connection
+from psycopg import Connection, sql
 
 
 def create_connection(
@@ -55,8 +55,14 @@ def create_connection(
         )
 
         with connection.cursor() as cursor:
-            cursor.execute(f"SET search_path TO {schema};")
-            cursor.execute(f"SET statement_timeout TO {statement_timeout_ms};")
+            cursor.execute(
+                sql.SQL("SET search_path TO {};")
+                    .format(sql.Identifier(schema))
+            )
+            cursor.execute(
+                sql.SQL("SET statement_timeout TO {};")
+                    .format(sql.Literal(statement_timeout_ms))
+            )
 
         return connection
 

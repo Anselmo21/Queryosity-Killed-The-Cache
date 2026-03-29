@@ -1,3 +1,10 @@
+iniconfig==2.3.0
+nodeenv==1.10.0
+packaging==26.0
+pluggy==1.6.0
 psycopg==3.2.13
 psycopg-binary==3.2.13
+Pygments==2.19.2
+pyright==1.1.408
+pytest==9.0.2
 typing_extensions==4.15.0
