@@ -11,6 +11,8 @@ GAConfig
     Hyperparameter configuration for the genetic algorithm.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
@@ -34,9 +36,14 @@ class GAConfig:
     elite_count : int
         Number of top individuals preserved unchanged across generations.
     cache_capacity_pages : int
-        LRU cache capacity in 8 KB pages used for fitness evaluation.
+        Clock-sweep cache capacity in 8 KB pages used for fitness evaluation.
     seed : int | None
         Random seed for reproducibility.  None means non-deterministic.
+    use_approximate_fitness : bool
+        When True and page-level data is available, use the precomputed
+        overlap matrix for fast approximate fitness during evolution.
+        The final best schedule is always validated with the exact
+        clock-sweep simulation.
     """
 
     population_size: int = 100
@@ -47,3 +54,4 @@ class GAConfig:
     elite_count: int = 2
     cache_capacity_pages: int = 1000
     seed: int | None = None
+    use_approximate_fitness: bool = False
