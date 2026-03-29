@@ -11,19 +11,9 @@ GAConfig
     Hyperparameter configuration for the genetic algorithm.
 """
 
-from dataclasses import dataclass, field
-from typing import Literal
+from __future__ import annotations
 
-from src.simulator.dqn_simulator import DQN
-
-
-type FitnessType = Literal['lru'] | Literal['dqn']
-"""
-Types of supported fitness functions.
-
-- LRU: Simulation of a LRU cache, metric is hit rate.
-- DQN: Deep Q-Network, metric is the output of the neural network.
-"""
+from dataclasses import dataclass
 
 
 @dataclass
@@ -46,17 +36,14 @@ class GAConfig:
     elite_count : int
         Number of top individuals preserved unchanged across generations.
     cache_capacity_pages : int
-        LRU cache capacity in 8 KB pages used for fitness evaluation.
-    all_tables : list[str]
-        List of all tables used in all the queries.
-    max_pages : dict[str, int]
-        The maximum number of pages used by each table.
-    fitness_type : FitnessType
-        The type of fitness function to use in the genetic algorithm.
-    dqn : DQN | None
-        The Deep Q-Network used if the DQN fitness function is selected.
+        Clock-sweep cache capacity in 8 KB pages used for fitness evaluation.
     seed : int | None
         Random seed for reproducibility.  None means non-deterministic.
+    use_approximate_fitness : bool
+        When True and page-level data is available, use the precomputed
+        overlap matrix for fast approximate fitness during evolution.
+        The final best schedule is always validated with the exact
+        clock-sweep simulation.
     """
 
     population_size: int = 100
@@ -66,8 +53,5 @@ class GAConfig:
     tournament_size: int = 3
     elite_count: int = 2
     cache_capacity_pages: int = 1000
-    all_tables: list[str] = field(default_factory=list)
-    max_pages: dict[str, int] = field(default_factory=dict)
-    fitness_type: FitnessType = "lru"
-    dqn: DQN | None = None
     seed: int | None = None
+    use_approximate_fitness: bool = False

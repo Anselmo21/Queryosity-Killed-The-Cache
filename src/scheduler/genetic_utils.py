@@ -29,7 +29,7 @@ from __future__ import annotations
 import copy
 import random
 from dataclasses import dataclass, field
-from typing import Optional, Protocol
+from typing import Optional
 
 from src.scheduler.genetic_config import GAConfig
 from src.simulator.access_profile import AccessProfile
@@ -37,64 +37,16 @@ from src.simulator.cache_simulator import (
     simulate_schedule,
     simulate_schedule_page_level,
 )
-from src.simulator.simulator_types import PageSet
-
-
-class FitnessFunction(Protocol):
-    """
-    Protocol defining the interface for query schedule fitness functions.
-
-    Any callable conforming to this protocol can be used as a fitness
-    function in the genetic algorithm, allowing the simulation-based and
-    DQN-based fitness evaluators to be used interchangeably.
-
-    Methods
-    -------
-    __call__(individual, profiles, cache_capacity_pages, page_sets)
-        Evaluate the fitness of a query schedule.
-    """
-
-    def __call__(
-        self,
-        individual: list[int],
-        profiles: list[AccessProfile],
-        cache_capacity_pages: int,
-        page_sets: list[PageSet] | None,
-    ) -> float:
-        """
-        Evaluate the fitness of a query schedule.
-
-        Parameters
-        ----------
-        individual : list[int]
-            Permutation of query indices representing the schedule to
-            evaluate.
-        profiles : list[AccessProfile]
-            Access profiles for all queries, indexed by query index.
-        cache_capacity_pages : int
-            LRU cache capacity in 8 KB pages.
-        page_sets : list[PageSet] or None
-            Optional precomputed page sets for each query. May be used
-            by some implementations to avoid redundant computation.
-
-        Returns
-        -------
-        float
-            Fitness score of the schedule. Higher is better.
-        """
-        ...
-
-
-def _fitness_cache_simulation(
+def _fitness(
     individual: list[int],
     profiles: list[AccessProfile],
     cache_capacity_pages: int,
-    page_sets: list[PageSet] | None = None,
+    page_sets: list[frozenset[int]] | None = None,
 ) -> float:
     """
     Evaluate the cache hit-ratio fitness of an individual.
 
-    When page_sets are provided, uses page-level LRU simulation.
+    When page_sets are provided, uses page-level clock-sweep simulation.
     Otherwise falls back to table-level simulation.
 
     Parameters
@@ -104,9 +56,9 @@ def _fitness_cache_simulation(
     profiles : list[AccessProfile]
         Access profiles for each query, indexed by query index.
     cache_capacity_pages : int
-        LRU cache capacity in 8 KB pages.
-    page_sets : list[PageSet] | None
-        Per-query page sets from pg_buffercache profiling.
+        Clock-sweep cache capacity in 8 KB pages.
+    page_sets : list[frozenset[int]] | None
+        Integer-encoded page sets from pg_buffercache profiling.
 
     Returns
     -------
@@ -232,13 +184,11 @@ class Individual:
     profiles : list[AccessProfile]
         Access profiles for each query, indexed by query index.
     cache_capacity_pages : int
-        LRU cache capacity in 8 KB pages used for fitness evaluation.
+        Clock-sweep cache capacity in 8 KB pages used for fitness evaluation.
     _rng : random.Random
         Random number generator instance used for mutation and crossover.
     _config : GAConfig
         Algorithm configuration, including mutation and crossover rates.
-    _fitness_fn : FitnessFunction
-        The fitness function to be used to measure fitness of an individual.
     _fitness : float or None
         Cached fitness value.  None until first call to fitness().
     """
@@ -248,7 +198,6 @@ class Individual:
     cache_capacity_pages: int
     _rng: random.Random
     _config: GAConfig
-    _fitness_fn: FitnessFunction
     _fitness: Optional[float] = field(init=False, default=None)
 
     def fitness(self) -> float:
@@ -264,7 +213,7 @@ class Individual:
             Cache hit ratio in the range [0.0, 1.0].
         """
         if self._fitness is None:
-            self._fitness = self._fitness_fn(
+            self._fitness = _fitness(
                 self.schedule,
                 self.profiles,
                 self.cache_capacity_pages,
@@ -342,11 +291,11 @@ class IndividualWithPageSet(Individual):
 
     Attributes
     ----------
-    page_sets : list[PageSet]
-        Per-query page sets used for page-level fitness evaluation.
+    page_sets : list[frozenset[int]]
+        Integer-encoded page sets used for page-level fitness evaluation.
     """
 
-    page_sets: list[PageSet]
+    page_sets: list[frozenset[int]]
 
     def fitness(self) -> float:
         """
@@ -361,7 +310,7 @@ class IndividualWithPageSet(Individual):
             Cache hit ratio in the range [0.0, 1.0].
         """
         if self._fitness is None:
-            self._fitness = self._fitness_fn(
+            self._fitness = _fitness(
                 self.schedule,
                 self.profiles,
                 self.cache_capacity_pages,
@@ -376,7 +325,7 @@ def make_individual(
     cache_capacity_pages: int,
     rng: random.Random,
     config: GAConfig,
-    page_sets: Optional[list[PageSet]],
+    page_sets: Optional[list[frozenset[int]]],
 ) -> Individual:
     """
     Construct an Individual or IndividualWithPageSet depending on inputs.
@@ -393,23 +342,15 @@ def make_individual(
         Random number generator instance.
     config : GAConfig
         Algorithm configuration.
-    page_sets : list[PageSet] or None
-        Per-query page sets for page-level simulation.  If None, an
-        Individual using table-level simulation is returned.
+    page_sets : list[frozenset[int]] or None
+        Integer-encoded page sets for page-level simulation.  If None,
+        an Individual using table-level simulation is returned.
 
     Returns
     -------
     Individual
         IndividualWithPageSet if page_sets is provided, otherwise Individual.
     """
-    if config.fitness_type == "lru":
-        _fitness_fn = _fitness_cache_simulation
-    elif config.fitness_type == "dqn":
-        assert config.dqn is not None, "DQN fitness was chosen but config.dqn is None"
-        _fitness_fn = config.dqn.infer
-    else:
-        raise ValueError(f"Unknown fitness type: {config.fitness_type}")
-
     if page_sets is not None:
         return IndividualWithPageSet(
             schedule=schedule,
@@ -418,7 +359,6 @@ def make_individual(
             _rng=rng,
             _config=config,
             page_sets=page_sets,
-            _fitness_fn=_fitness_fn,
         )
     return Individual(
         schedule=schedule,
@@ -426,7 +366,6 @@ def make_individual(
         cache_capacity_pages=cache_capacity_pages,
         _rng=rng,
         _config=config,
-        _fitness_fn=_fitness_fn,
     )
 
 
@@ -463,7 +402,7 @@ def select_parents(
 
 
 __all__ = [
-    "_fitness_cache_simulation",
+    "_fitness",
     "_tournament_select",
     "_order_crossover",
     "_swap_mutation",
