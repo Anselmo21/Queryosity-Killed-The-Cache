@@ -1,0 +1,184 @@
+[
+  {
+    "query_id": "q1",
+    "table_pages": {
+      "lineitem": 7565
+    }
+  },
+  {
+    "query_id": "q2",
+    "table_pages": {
+      "partsupp": 1368,
+      "region": 1,
+      "nation": 1,
+      "supplier": 8,
+      "part": 4
+    }
+  },
+  {
+    "query_id": "q3",
+    "table_pages": {
+      "lineitem": 6345,
+      "orders": 1417,
+      "customer": 15
+    }
+  },
+  {
+    "query_id": "q4",
+    "table_pages": {
+      "orders": 59,
+      "lineitem": 407
+    }
+  },
+  {
+    "query_id": "q5",
+    "table_pages": {
+      "orders": 93,
+      "customer": 87,
+      "region": 1,
+      "nation": 1,
+      "supplier": 10,
+      "lineitem": 2
+    }
+  },
+  {
+    "query_id": "q6",
+    "table_pages": {
+      "lineitem": 75
+    }
+  },
+  {
+    "query_id": "q7",
+    "table_pages": {
+      "nation": 1,
+      "supplier": 1,
+      "lineitem": 1,
+      "customer": 6,
+      "orders": 1
+    }
+  },
+  {
+    "query_id": "q8",
+    "table_pages": {
+      "part": 1,
+      "lineitem": 1,
+      "region": 1,
+      "nation": 1,
+      "customer": 6,
+      "orders": 1,
+      "supplier": 10
+    }
+  },
+  {
+    "query_id": "q9",
+    "table_pages": {
+      "orders": 611,
+      "partsupp": 570,
+      "part": 5,
+      "supplier": 10,
+      "lineitem": 1,
+      "nation": 1
+    }
+  },
+  {
+    "query_id": "q10",
+    "table_pages": {
+      "customer": 1595,
+      "nation": 1,
+      "lineitem": 1213,
+      "orders": 24
+    }
+  },
+  {
+    "query_id": "q11",
+    "table_pages": {
+      "nation": 1,
+      "supplier": 1,
+      "partsupp": 1758
+    }
+  },
+  {
+    "query_id": "q12",
+    "table_pages": {
+      "orders": 1526,
+      "lineitem": 22
+    }
+  },
+  {
+    "query_id": "q13",
+    "table_pages": {
+      "customer": 74,
+      "orders": 1465
+    }
+  },
+  {
+    "query_id": "q14",
+    "table_pages": {
+      "lineitem": 158,
+      "part": 611
+    }
+  },
+  {
+    "query_id": "q15",
+    "table_pages": {
+      "lineitem": 449,
+      "supplier": 87
+    }
+  },
+  {
+    "query_id": "q16",
+    "table_pages": {
+      "partsupp": 163,
+      "supplier": 1,
+      "part": 62
+    }
+  },
+  {
+    "query_id": "q17",
+    "table_pages": {
+      "part": 1,
+      "lineitem": 1
+    }
+  },
+  {
+    "query_id": "q18",
+    "table_pages": {
+      "lineitem": 6594,
+      "customer": 176,
+      "orders": 1
+    }
+  },
+  {
+    "query_id": "q19",
+    "table_pages": {
+      "part": 2,
+      "lineitem": 1
+    }
+  },
+  {
+    "query_id": "q20",
+    "table_pages": {
+      "nation": 1,
+      "supplier": 3,
+      "partsupp": 1,
+      "lineitem": 1,
+      "part": 1
+    }
+  },
+  {
+    "query_id": "q21",
+    "table_pages": {
+      "nation": 1,
+      "supplier": 42,
+      "lineitem": 5861,
+      "orders": 358
+    }
+  },
+  {
+    "query_id": "q22",
+    "table_pages": {
+      "customer": 4,
+      "orders": 1
+    }
+  }
+]

@@ -1,0 +1,128 @@
+[
+  {
+    "query_id": "q15",
+    "elapsed_ms": 12665.391999995336,
+    "shared_hit_blocks": 0,
+    "shared_read_blocks": 67293
+  },
+  {
+    "query_id": "q1",
+    "elapsed_ms": 8614.032542012865,
+    "shared_hit_blocks": 67083,
+    "shared_read_blocks": 50630
+  },
+  {
+    "query_id": "q13",
+    "elapsed_ms": 6759.73941598204,
+    "shared_hit_blocks": 1473413,
+    "shared_read_blocks": 31257
+  },
+  {
+    "query_id": "q14",
+    "elapsed_ms": 525.8372919925023,
+    "shared_hit_blocks": 41956,
+    "shared_read_blocks": 4129
+  },
+  {
+    "query_id": "q18",
+    "elapsed_ms": 10966.778458008775,
+    "shared_hit_blocks": 2403554,
+    "shared_read_blocks": 49
+  },
+  {
+    "query_id": "q4",
+    "elapsed_ms": 1356.9939580047503,
+    "shared_hit_blocks": 138859,
+    "shared_read_blocks": 11
+  },
+  {
+    "query_id": "q20",
+    "elapsed_ms": 5279.01933301473,
+    "shared_hit_blocks": 270637,
+    "shared_read_blocks": 20417
+  },
+  {
+    "query_id": "q16",
+    "elapsed_ms": 843.0955419898964,
+    "shared_hit_blocks": 20045,
+    "shared_read_blocks": 5702
+  },
+  {
+    "query_id": "q9",
+    "elapsed_ms": 3134.7359159844927,
+    "shared_hit_blocks": 530110,
+    "shared_read_blocks": 265
+  },
+  {
+    "query_id": "q8",
+    "elapsed_ms": 1714.6223339950666,
+    "shared_hit_blocks": 1283132,
+    "shared_read_blocks": 1264
+  },
+  {
+    "query_id": "q11",
+    "elapsed_ms": 22923.661833978258,
+    "shared_hit_blocks": 53640,
+    "shared_read_blocks": 185
+  },
+  {
+    "query_id": "q12",
+    "elapsed_ms": 886.7509579868056,
+    "shared_hit_blocks": 138870,
+    "shared_read_blocks": 0
+  },
+  {
+    "query_id": "q17",
+    "elapsed_ms": 218.3213749958668,
+    "shared_hit_blocks": 221529,
+    "shared_read_blocks": 165
+  },
+  {
+    "query_id": "q2",
+    "elapsed_ms": 130168.8457080163,
+    "shared_hit_blocks": 628190,
+    "shared_read_blocks": 3
+  },
+  {
+    "query_id": "q19",
+    "elapsed_ms": 838.3604169939645,
+    "shared_hit_blocks": 19620,
+    "shared_read_blocks": 355
+  },
+  {
+    "query_id": "q6",
+    "elapsed_ms": 645.8242499502376,
+    "shared_hit_blocks": 105710,
+    "shared_read_blocks": 1
+  },
+  {
+    "query_id": "q22",
+    "elapsed_ms": 654.4834999949671,
+    "shared_hit_blocks": 64662,
+    "shared_read_blocks": 0
+  },
+  {
+    "query_id": "q10",
+    "elapsed_ms": 1296.8802920076996,
+    "shared_hit_blocks": 1687418,
+    "shared_read_blocks": 98
+  },
+  {
+    "query_id": "q5",
+    "elapsed_ms": 3088.951084006112,
+    "shared_hit_blocks": 5114182,
+    "shared_read_blocks": 2199
+  },
+  {
+    "query_id": "q7",
+    "elapsed_ms": 1266.254249960184,
+    "shared_hit_blocks": 655526,
+    "shared_read_blocks": 668
+  },
+  {
+    "query_id": "q3",
+    "elapsed_ms": 2499.3554999819025,
+    "shared_hit_blocks": 1619997,
+    "shared_read_blocks": 42
+  }
+]

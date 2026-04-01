@@ -1,0 +1,4 @@
+{
+  "workload": "tpch",
+  "early_stop_gen": null
+}
