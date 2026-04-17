@@ -15,23 +15,18 @@
 # %%
 import random
 import sys
-from typing import Collection
+import typing
+from typing import Sequence as Seq
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 from torch import Tensor
-from tqdm import tqdm
 
 sys.path.insert(0, "..")
-from src.simulator.cache_simulator import PageLRUCache
-from jaxtyping import Float, Int
-from collections import defaultdict
-from copy import deepcopy
+from src.simulator.cache_simulator import encode_page_sets
 from dqntrainer import DQNTrainer
 
 # %%
@@ -56,6 +51,12 @@ queries: list[list[tuple[str, int]]] = [
 ]
 query_id_map = {idx: query for idx, query in enumerate(queries)}
 
+raw_page_sets: list[set[tuple[str, int]]] = []
+for query in queries:
+    raw_page_sets.append(set(query))
+
+page_sets, page_to_id = encode_page_sets(raw_page_sets)
+
 TARGET_COLS = 1000
 
 table2n_blocks: dict[str, int] = {}
@@ -68,9 +69,11 @@ tables = table2n_blocks.keys()
 # %%
 N_EPISODES = 25
 dqn_trainer = DQNTrainer(
-    table2n_blocks=table2n_blocks,
-    query_id_map=query_id_map,
-    target_cols=1000,
+    table_to_n_blocks=table2n_blocks,
+    queryid_to_tablepages=query_id_map,
+    queryid_to_tablepageids=page_sets,
+    tablepage_to_tablepageid=page_to_id,
+    target_cols=10_000,
     rng=rng,
 )
 dqn, log = dqn_trainer.train(
@@ -89,22 +92,33 @@ episodes = np.arange(len(log.episode_mean_loss))
 mean = np.array(log.episode_mean_loss)
 std = np.array(log.episode_std_loss)
 
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+fig, axes = plt.subplots(2, 2, figsize=(14, 5))
+axes = typing.cast(Seq[Seq[Axes]], axes)
 
-# Episode-level: mean ± 1 std
-ax = axes[0]
+ax = axes[0][0]
 ax.plot(episodes, mean, label="Mean loss")
-ax.fill_between(episodes, mean - std, mean + std, alpha=0.25, label="±1 std")
+ax.fill_between(episodes, mean - std, mean + std, alpha=0.25, label="±1 std", color='red')
 ax.set(xlabel="Episode", ylabel="Loss", title="Loss per Episode")
 ax.legend()
 
-# Global step-level loss
-ax = axes[1]
-ax.plot(log.step_loss, linewidth=0.5, alpha=0.6)
+ax = axes[1][0]
+ax.plot(episodes, mean, label="Mean log loss")
+ax.fill_between(episodes, mean - std, mean + std, alpha=0.25, label="±1 std", color='red')
+ax.set_yscale('log')
+ax.set(xlabel="Episode", ylabel="Log loss", title="Log loss per Episode")
+ax.legend()
+
+ax = axes[0][1]
+ax.plot(log.step_loss)
 ax.set(xlabel="Step (global)", ylabel="Loss", title="Loss per Step")
 
+ax = axes[1][1]
+ax.plot(log.step_loss)
+ax.set_yscale('log')
+ax.set(xlabel="Log gtep (global)", ylabel="Log loss", title="Log loss per step")
+
 fig.tight_layout()
-plt.savefig('fig.png')
+plt.show()
 
 # %%
 dqn.cpu()

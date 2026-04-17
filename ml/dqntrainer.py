@@ -14,19 +14,38 @@ from torch import Tensor
 from tqdm import tqdm
 
 sys.path.insert(0, "..")
-from src.simulator.cache_simulator import PageLRUCache
+from src.simulator.cache_simulator import PageClockSweepCache
 from jaxtyping import Float, Int
 from collections import defaultdict
 from copy import deepcopy
 
 
+def invert[K, V](d: dict[K, V]) -> dict[V, K]:
+    '''
+    Inverts a mapping d, raising an exception if more than 1 key maps to the
+    same value.
+    '''
+    inv: dict[V, K] = {}
+    for k, v in d.items():
+        if v in inv:
+            raise ValueError(f"Duplicate value in dict: {v}")
+        inv[v] = k
+    return inv
+
+
 type Query = int
-type State = tuple[PageLRUCache, list[Query]]
+'''Query represented by a integer query ID.'''
+
+type State = tuple[PageClockSweepCache, list[Query]]
+'''State represented by a cache and a list of remaining queries.'''
+
 type Action = Query
-"""Query ID"""
+'''Action represented by a query chosen from the remaining queries.'''
 
 
 class DQN(nn.Module):
+    '''Deep Q-Network.'''
+
     def __init__(self, input_size):
         super().__init__()
         self.net = nn.Sequential(
@@ -46,40 +65,69 @@ class DQN(nn.Module):
 
 @dataclasses.dataclass
 class TrainingLog:
+    '''Training logs to plot after DQN training is complete.'''
 
     # Per-episode aggregates
     episode_mean_loss: list[float] = dataclasses.field(default_factory=list)
-    episode_std_loss: list[float]  = dataclasses.field(default_factory=list)
-    episode_min_loss: list[float]  = dataclasses.field(default_factory=list)
-    episode_max_loss: list[float]  = dataclasses.field(default_factory=list)
-    episode_reward: list[float]    = dataclasses.field(default_factory=list)
-    episode_steps: list[int]       = dataclasses.field(default_factory=list)
-    episode_epsilon: list[float]   = dataclasses.field(default_factory=list)
+    episode_std_loss : list[float] = dataclasses.field(default_factory=list)
+    episode_min_loss : list[float] = dataclasses.field(default_factory=list)
+    episode_max_loss : list[float] = dataclasses.field(default_factory=list)
+    episode_reward   : list[float] = dataclasses.field(default_factory=list)
+    episode_steps    : list[int]   = dataclasses.field(default_factory=list)
+    episode_epsilon  : list[float] = dataclasses.field(default_factory=list)
 
     # Per-step (global across all episodes)
     step_loss: list[float] = dataclasses.field(default_factory=list)
 
 
 class DQNTrainer:
+    '''Training class for the DQN.'''
 
     tables: list[str]
-    table2n_blocks: dict[str, int]
-    query_id_map: dict[int, list[tuple[str, int]]]
+    '''List of table IDs.'''
+
+    table_to_n_blocks: dict[str, int]
+    '''Mapping from table ID to number of pages that table uses.'''
+
+    queryid_to_tablepages: dict[int, list[tuple[str, int]]]
+    '''
+    Mapping from query ID to the list of (table, block) tuples it accesses.
+    '''
+
+    queryid_to_tablepageids: list[frozenset[int]]
+    '''Mapping of query ID to the unique (table, block) IDs it accesses.'''
+
+    tablepage_to_tablepageid: dict[tuple[str, int], int]
+    '''Mapping of (table, block) to encoded ID.'''
+
+    tablepageid_to_tablepage: dict[int, tuple[str, int]]
+    '''Mapping of encoded ID to (table, block).'''
+
     query_id_to_bitmap_vector: dict[int, dict[str, Int[Tensor, 'N']]]
+    '''Mapping of query ID to bitmap vector.'''
+
     target_cols: int
+    '''Target number of columns in the bitmap matrix.'''
+
     rng: random.Random
+    '''Random number generator for reproducibility.'''
 
     def __init__(
         self,
-        table2n_blocks: dict[str, int],
-        query_id_map: dict[int, list[tuple[str, int]]],
+        table_to_n_blocks: dict[str, int],
+        queryid_to_tablepages: dict[int, list[tuple[str, int]]],
+        queryid_to_tablepageids: list[frozenset[int]],
+        tablepage_to_tablepageid: dict[tuple[str, int], int],
         target_cols: int,
         rng: random.Random,
     ):
-        self.table2n_blocks = table2n_blocks
-        self.tables = list(table2n_blocks.keys())
-        self.query_id_map = query_id_map
+        self.table_to_n_blocks = table_to_n_blocks
+        self.tables = list(table_to_n_blocks.keys())
+        self.queryid_to_tablepages = queryid_to_tablepages
         self.query_id_to_bitmap_vector = dict()
+        self.queryid_to_tablepageids = queryid_to_tablepageids
+        self.tablepage_to_tablepageid = tablepage_to_tablepageid
+        self.tablepageid_to_tablepage = invert(tablepage_to_tablepageid)
         self.target_cols = target_cols
         self.rng = rng
 
@@ -107,57 +155,69 @@ class DQNTrainer:
                 # SmartQueue paper because they don't make sense to me :P
                 truncated = row[:bin_size * target_cols]
                 truncated = truncated.float()
-                # I'm averaging instead of summing & dividing by floor(|Fi|/|Di|)
-                # because I think that's what the SmartQueue paper was trying to
-                # achieve anyway :P
+                # I'm averaging instead of summing & dividing by
+                # floor(|Fi|/|Di|) because I think that's what the SmartQueue
+                # paper was trying to achieve anyway :P
                 downsized = truncated.view(target_cols, bin_size).mean(dim=1)
                 result.append(downsized)
         return torch.stack(result)
 
-
     def execute(
         self,
-        query: list[tuple[str, int]],
-        cache: PageLRUCache,
-    ) -> tuple[float, PageLRUCache]:
-        hits = 0
-        total = 0
-        for table, block in query:
-            if cache.access((table, block)):
-                hits += 1
-            total += 1
+        query_id: int,
+        cache: PageClockSweepCache,
+    ) -> tuple[float, PageClockSweepCache]:
+        '''
+        Simulate the execution of a query by measuring its interaction with the
+        cache.
+        '''
+        pages = self.queryid_to_tablepageids[query_id]
+        hits = cache.batch_access(pages)
+        total = len(pages)
         hit_rate = hits / total
         return hit_rate, deepcopy(cache)
 
-
     def cache_to_bitmap_vectors(
         self,
-        cache: PageLRUCache,
+        cache: PageClockSweepCache,
         device: torch.device,
     ) -> dict[str, Int[Tensor, 'N']]:
-        # Group blocks by table in one pass
+        '''
+        Converts the cache into a mapping from tables to bitmap tensors.
+        '''
+        pages_in_cache = cache._page_ids
+        tablepages_in_cache = [
+            self.tablepageid_to_tablepage[page_id]
+            for page_id in pages_in_cache
+        ]
+
         table2blocks: dict[str, list[int]] = defaultdict(list)
-        for table, block in cache._entries.keys():
+        for table, block in tablepages_in_cache:
             table2blocks[table].append(block)
 
         rows = dict()
-        for table, size in self.table2n_blocks.items():
+        for table, size in self.table_to_n_blocks.items():
             t = torch.zeros(size, dtype=torch.int, device=device)
             if table in table2blocks:
                 t[table2blocks[table]] = 1
             rows[table] = t
         return rows
 
-
     def query_to_bitmap_vectors(
         self,
         query_id: int,
         device: torch.device,
     ) -> dict[str, Int[Tensor, 'N']]:
+        '''
+        Converts a query into a mapping from tables to bitmap tensors.
+
+        Also caches the query's bitmap vector so that future computation is
+        reduced (a query's bitmap vector should never change).
+        '''
         if query_id not in self.query_id_to_bitmap_vector:
-            query = self.query_id_map[query_id]
+            query = self.queryid_to_tablepages[query_id]
             rows = dict()
-            for table, size in self.table2n_blocks.items():
+            for table, size in self.table_to_n_blocks.items():
                 t = torch.zeros(size, dtype=torch.int, device=device)
                 for tbl, block in query:
                     if tbl == table:
@@ -169,10 +229,14 @@ class DQNTrainer:
     def q_value(
         self,
         network: DQN,
-        cache: PageLRUCache,
+        cache: PageClockSweepCache,
         query_id: int,
         device: torch.device
     ) -> Tensor:
+        '''
+        Calculates the Q-value of the chosen query by creating the bitmap
+        vectors of the query and cache and running it through the DQN.
+        '''
         query_vectors = self.query_to_bitmap_vectors(query_id, device)
         downsized_query_vector = self.downsize(
             query_vectors, self.target_cols, device
@@ -202,6 +266,7 @@ class DQNTrainer:
         cache_capacity_pages: int,
         device: torch.device,
     ) -> tuple[DQN, TrainingLog]:
+        '''Trains the DQN.'''
         assert mini_batch_size == None or history_size >= mini_batch_size, \
             'History size must be >= mini batch size'
         assert 0 <= tau <= 1
@@ -209,7 +274,7 @@ class DQNTrainer:
         # =====================================================================
         # Step 1: Initialize network.
         # =====================================================================
-        queries = list(self.query_id_map.keys())
+        queries = list(self.queryid_to_tablepages.keys())
         input_dimension = 2 * len(self.tables) * self.target_cols
         Q = DQN(input_dimension)
         Q.to(device)
@@ -228,11 +293,11 @@ class DQNTrainer:
             # =================================================================
             # Step 2: Define initial state.
             # =================================================================
-            cache = PageLRUCache(cache_capacity_pages)
+            cache = PageClockSweepCache(cache_capacity_pages)
             remaining_queries = deepcopy(queries)
             state_counter = 0
             episode_reward = 0.0
-            episode_losses = []  # <-- per-step losses within this episode
+            episode_losses = []
 
             while True:
                 state_counter += 1
@@ -262,15 +327,13 @@ class DQNTrainer:
                         )
 
                 query_id = remaining_queries[idx]
-                query = self.query_id_map[query_id]
                 next_remaining_queries = deepcopy(remaining_queries)
                 next_remaining_queries.pop(idx)
 
                 # =============================================================
                 # Step 4: Execute action and observe reward.
                 # =============================================================
-
-                reward, next_cache = self.execute(query, cache)
+                reward, next_cache = self.execute(query_id, cache)
                 episode_reward += reward
 
                 done = len(next_remaining_queries) == 0
@@ -317,6 +380,7 @@ class DQNTrainer:
                 loss = losses.mean()
                 episode_losses.append(loss.item())
                 log.step_loss.append(loss.item())
+
                 # =============================================================
                 # Step 7: Backpropagation
                 # =============================================================
