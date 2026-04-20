@@ -27,7 +27,22 @@ from torch import Tensor
 
 sys.path.insert(0, "..")
 from src.simulator.cache_simulator import encode_page_sets
-from dqntrainer import DQNTrainer
+from src.simulator.cache_simulator import PageClockSweepCache
+from dqntrainer import DQN, DQNTrainer
+
+# %%
+print(
+    'Before training the model, we need a name for it to avoid clashing with '
+    'other models. I suggest something like "<benchmark>-<size>"'
+)
+NAME = input('Name: ')
+
+# %%
+print('We also need the capacity of the cache so was can simulate it.')
+CACHE_CAPACITY_PAGES = int(input('Cache capacity in 8kb pages: '))
+
+# %%
+TARGET_COLS = 1000 # From the paper
 
 # %%
 device = torch.device('cpu')
@@ -57,8 +72,6 @@ for query in queries:
 
 page_sets, page_to_id = encode_page_sets(raw_page_sets)
 
-TARGET_COLS = 1000
-
 table2n_blocks: dict[str, int] = {}
 for group in queries:
     for table, block in group:
@@ -67,13 +80,13 @@ for group in queries:
 tables = table2n_blocks.keys()
 
 # %%
-N_EPISODES = 25
+N_EPISODES = 1
 dqn_trainer = DQNTrainer(
     table_to_n_blocks=table2n_blocks,
     queryid_to_tablepages=query_id_map,
     queryid_to_tablepageids=page_sets,
     tablepage_to_tablepageid=page_to_id,
-    target_cols=10_000,
+    target_cols=TARGET_COLS,
     rng=rng,
 )
 dqn, log = dqn_trainer.train(
@@ -83,9 +96,12 @@ dqn, log = dqn_trainer.train(
     tau=0.1,
     history_size=100,
     mini_batch_size=None,
-    cache_capacity_pages=2000,
+    cache_capacity_pages=CACHE_CAPACITY_PAGES,
     device=device,
 )
+
+# %%
+torch.save(dqn.state_dict(), f'{NAME}.pt')
 
 # %%
 episodes = np.arange(len(log.episode_mean_loss))
@@ -115,20 +131,55 @@ ax.set(xlabel="Step (global)", ylabel="Loss", title="Loss per Step")
 ax = axes[1][1]
 ax.plot(log.step_loss)
 ax.set_yscale('log')
-ax.set(xlabel="Log gtep (global)", ylabel="Log loss", title="Log loss per step")
+ax.set(xlabel="Log step (global)", ylabel="Log loss", title="Log loss per step")
 
 fig.tight_layout()
 plt.show()
 
 # %%
-dqn.cpu()
-input_size = dqn.net[0].in_features
-dummy_input = torch.zeros(1, input_size)
-torch.onnx.export(
-    dqn,
-    (dummy_input,),
-    'dqn.onnx',
-    input_names=['state'],
-    output_names=['q_value'],
-    dynamic_axes={'state': {0: 'batch_size'}}  # allows variable batch size
-)
+input_dimension = 2 * len(tables) * TARGET_COLS
+dqn = DQN(input_dimension)
+dqn.load_state_dict(torch.load(f'{NAME}.pt'))
+dqn.to(device)
+dqn.eval()
+
+# %%
+cache = PageClockSweepCache(CACHE_CAPACITY_PAGES)
+
+remaining_queries = list(query_id_map.keys())
+schedule = []
+
+hit_rate_history = []
+best_q_value_history = []
+
+# Scheduling loop
+while len(remaining_queries) > 0:
+    # Get the query with the highest Q-value
+    query_id_to_q_value = {
+        query_id: dqn_trainer.q_value(dqn, cache, query_id, device).item()
+        for query_id in remaining_queries
+    }
+    best_query_id = max(
+        query_id_to_q_value,
+        key=lambda qid: query_id_to_q_value[qid]
+    )
+
+    # Add the best query to the schedule, remove it from the queue
+    schedule.append(best_query_id)
+    remaining_queries.remove(best_query_id)
+    best_q_value_history.append(query_id_to_q_value[best_query_id])
+
+    # Update cache by simulating the selected query
+    hit_rate, next_cache = dqn_trainer.execute(best_query_id, cache)
+    hit_rate_history.append(hit_rate)
+    cache = next_cache
+
+# %%
+print('SCHEDULE')
+print([f'q{query_id}' for query_id in schedule])
+print(f'\n{'Query ID':<12} {'Q-Value':<12} {'Hit Rate':<12}')
+print("-" * 36)
+for query_id, q_value, hit_rate in zip(schedule, best_q_value_history, hit_rate_history):
+    print(f'{query_id:<12} {q_value:<12.4f} {hit_rate:<12.4f}')
+print("-" * 36)
+print(f'Average hit rate: {sum(hit_rate_history)/len(hit_rate_history):.4f}')
