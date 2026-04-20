@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.1
 #   kernelspec:
 #     display_name: ml_cuda12.2
 #     language: python
@@ -40,6 +40,13 @@ NAME = input('Name: ')
 # %%
 print('We also need the capacity of the cache so was can simulate it.')
 CACHE_CAPACITY_PAGES = int(input('Cache capacity in 8kb pages: '))
+
+# %%
+print(
+    'And we need the number of training iterations (episodes) to train the '
+    'DQN.'
+)
+N_EPISODES = int(input('Number of episodes: '))
 
 # %%
 TARGET_COLS = 1000 # From the paper
@@ -80,7 +87,6 @@ for group in queries:
 tables = table2n_blocks.keys()
 
 # %%
-N_EPISODES = 1
 dqn_trainer = DQNTrainer(
     table_to_n_blocks=table2n_blocks,
     queryid_to_tablepages=query_id_map,
