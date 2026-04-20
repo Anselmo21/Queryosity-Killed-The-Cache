@@ -1,13 +1,10 @@
 import dataclasses
+import functools
 import random
 import sys
 from typing import Collection
 
-import matplotlib.pyplot as plt
-from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -177,6 +174,32 @@ class DQNTrainer:
         hit_rate = hits / total
         return hit_rate, deepcopy(cache)
 
+    @functools.lru_cache()
+    def _cache_to_bitmap_vectors(
+        self,
+        page_ids: tuple[int, ...],
+        device: torch.device,
+    ) -> dict[str, Int[Tensor, 'N']]:
+        '''
+        Converts the cache into a mapping from tables to bitmap tensors.
+        '''
+        tablepages_in_cache = [
+            self.tablepageid_to_tablepage[page_id]
+            for page_id in page_ids
+        ]
+
+        table_to_blocks: dict[str, list[int]] = defaultdict(list)
+        for table, block in tablepages_in_cache:
+            table_to_blocks[table].append(block)
+
+        rows = dict()
+        for table, size in self.table_to_n_blocks.items():
+            t = torch.zeros(size, dtype=torch.int, device=device)
+            if table in table_to_blocks:
+                t[table_to_blocks[table]] = 1
+            rows[table] = t
+        return rows
+
     def cache_to_bitmap_vectors(
         self,
         cache: PageClockSweepCache,
@@ -186,22 +209,7 @@ class DQNTrainer:
         Converts the cache into a mapping from tables to bitmap tensors.
         '''
         pages_in_cache = cache._page_ids
-        tablepages_in_cache = [
-            self.tablepageid_to_tablepage[page_id]
-            for page_id in pages_in_cache
-        ]
-
-        table2blocks: dict[str, list[int]] = defaultdict(list)
-        for table, block in tablepages_in_cache:
-            table2blocks[table].append(block)
-
-        rows = dict()
-        for table, size in self.table_to_n_blocks.items():
-            t = torch.zeros(size, dtype=torch.int, device=device)
-            if table in table2blocks:
-                t[table2blocks[table]] = 1
-            rows[table] = t
-        return rows
+        return self._cache_to_bitmap_vectors(tuple(pages_in_cache), device)
 
     def query_to_bitmap_vectors(
         self,
