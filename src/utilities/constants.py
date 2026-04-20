@@ -1,7 +1,6 @@
 """
 Project-wide constants for workload paths and database names.
 """
-
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[2]

@@ -1,5 +1,5 @@
 # "Queryosity Killed The Cache" Query Scheduler
-
+ 
 This repository contains the code and workloads used for the EECS 6414 (W2026)
 course project. It implements a cache-aware query scheduler on top of
 PostgreSQL 16, using a genetic algorithm (GA) over a clock-sweep buffer-pool
