@@ -30,7 +30,6 @@ from src.scheduler.genetic_utils import (
 from src.simulator.access_profile import AccessProfile
 from src.simulator.cache_simulator import (
     SimulationResult,
-    approximate_schedule_fitness,
     compute_overlap_matrix,
     simulate_schedule,
     simulate_schedule_page_level,
@@ -157,6 +156,15 @@ def run_ga(
             fitness_history=[sim.hit_ratio],
         )
 
+    # When the approximate-fitness path is active, precompute the
+    # overlap matrix and per-query page counts once up front.  These
+    # are shared by every Individual in the population.
+    overlap_matrix: list[list[int]] | None = None
+    page_counts: list[int] | None = None
+    if config.use_approximate_fitness and page_sets is not None:
+        overlap_matrix = compute_overlap_matrix(page_sets)
+        page_counts = [len(ps) for ps in page_sets]
+
     population: list[Individual] = []
     for _ in range(config.population_size):
         perm = list(range(n))
@@ -169,6 +177,8 @@ def run_ga(
                 rng=rng,
                 config=config,
                 page_sets=page_sets,
+                overlap_matrix=overlap_matrix,
+                page_counts=page_counts,
             )
         )
 

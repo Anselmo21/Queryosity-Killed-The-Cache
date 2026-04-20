@@ -14,12 +14,16 @@ Individual
 IndividualWithPageSet
     Extends Individual to evaluate fitness using page-level simulation
     from pg_buffercache data.
+IndividualApproximate
+    Extends Individual to evaluate fitness using the fast pairwise
+    overlap-matrix approximation.  Used during evolution only; the final
+    best schedule is always re-scored by the exact clock-sweep simulator.
 
 Functions
 ---------
 make_individual
     Factory that constructs the appropriate Individual subtype based on
-    whether page sets are available.
+    whether page sets are available and which fitness mode is configured.
 select_parents
     Selects multiple parents from the population via tournament selection.
 """
@@ -34,6 +38,7 @@ from typing import Optional
 from src.scheduler.genetic_config import GAConfig
 from src.simulator.access_profile import AccessProfile
 from src.simulator.cache_simulator import (
+    approximate_schedule_fitness,
     simulate_schedule,
     simulate_schedule_page_level,
 )
@@ -99,7 +104,7 @@ def _tournament_select(
     Returns
     -------
     Individual
-        Copy of the selected individual.
+        The selected individual (not a copy).
     """
     candidates = rng.sample(range(len(population)), k)
     winner = max(candidates, key=lambda i: population[i].fitness())
@@ -241,6 +246,8 @@ class Individual:
         new.schedule = list(self.schedule)
         if new._rng.random() < new._config.mutation_rate:
             _swap_mutation(new.schedule, new._rng)
+            # Schedule changed — invalidate inherited fitness cache.
+            new._fitness = None
         return new
 
     def __matmul__(
@@ -319,6 +326,48 @@ class IndividualWithPageSet(Individual):
         return self._fitness
 
 
+@dataclass
+class IndividualApproximate(Individual):
+    """
+    An Individual that evaluates fitness using the pairwise overlap approximation.
+
+    Used during GA evolution to reduce per-evaluation cost from
+    O(total_pages) to O(n_queries · w).  The final best schedule is
+    always re-scored by the exact clock-sweep simulator in run_ga.
+
+    Attributes
+    ----------
+    overlap_matrix : list[list[int]]
+        Symmetric pairwise page-overlap matrix from compute_overlap_matrix.
+    page_counts : list[int]
+        Number of distinct pages per query, same indexing as overlap_matrix.
+    """
+
+    overlap_matrix: list[list[int]]
+    page_counts: list[int]
+
+    def fitness(self) -> float:
+        """
+        Return the approximate cache hit-ratio fitness of this individual.
+
+        Evaluates and caches the fitness on the first call using the
+        precomputed overlap matrix.  Subsequent calls return the cached value.
+
+        Returns
+        -------
+        float
+            Approximate cache hit ratio in the range [0.0, 1.0].
+        """
+        if self._fitness is None:
+            self._fitness = approximate_schedule_fitness(
+                self.overlap_matrix,
+                self.page_counts,
+                self.schedule,
+                self.cache_capacity_pages,
+            )
+        return self._fitness
+
+
 def make_individual(
     schedule: list[int],
     profiles: list[AccessProfile],
@@ -326,9 +375,19 @@ def make_individual(
     rng: random.Random,
     config: GAConfig,
     page_sets: Optional[list[frozenset[int]]],
+    overlap_matrix: Optional[list[list[int]]] = None,
+    page_counts: Optional[list[int]] = None,
 ) -> Individual:
     """
-    Construct an Individual or IndividualWithPageSet depending on inputs.
+    Construct the appropriate Individual subtype for the configured fitness mode.
+
+    Dispatch rules:
+    * When ``config.use_approximate_fitness`` is True and page-level data
+      (``page_sets``, ``overlap_matrix``, ``page_counts``) is provided,
+      returns an IndividualApproximate.
+    * Else, if ``page_sets`` is provided, returns an IndividualWithPageSet
+      using exact page-level simulation.
+    * Else, returns a plain Individual using exact table-level simulation.
 
     Parameters
     ----------
@@ -345,12 +404,34 @@ def make_individual(
     page_sets : list[frozenset[int]] or None
         Integer-encoded page sets for page-level simulation.  If None,
         an Individual using table-level simulation is returned.
+    overlap_matrix : list[list[int]] or None
+        Precomputed pairwise overlap matrix.  Required when
+        ``config.use_approximate_fitness`` is True.
+    page_counts : list[int] or None
+        Per-query page counts.  Required when
+        ``config.use_approximate_fitness`` is True.
 
     Returns
     -------
     Individual
-        IndividualWithPageSet if page_sets is provided, otherwise Individual.
+        IndividualApproximate, IndividualWithPageSet, or Individual as
+        dictated by the dispatch rules above.
     """
+    if (
+        config.use_approximate_fitness
+        and page_sets is not None
+        and overlap_matrix is not None
+        and page_counts is not None
+    ):
+        return IndividualApproximate(
+            schedule=schedule,
+            profiles=profiles,
+            cache_capacity_pages=cache_capacity_pages,
+            _rng=rng,
+            _config=config,
+            overlap_matrix=overlap_matrix,
+            page_counts=page_counts,
+        )
     if page_sets is not None:
         return IndividualWithPageSet(
             schedule=schedule,
@@ -407,6 +488,8 @@ __all__ = [
     "_order_crossover",
     "_swap_mutation",
     "Individual",
+    "IndividualWithPageSet",
+    "IndividualApproximate",
     "make_individual",
     "select_parents",
 ]

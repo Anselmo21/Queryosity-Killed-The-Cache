@@ -15,7 +15,7 @@ def execute_query(
 
     Parameters
     ----------
-    query : str
+    query : sql.SQL
         SQL statement to execute.
     connection : Connection
         Active PostgreSQL connection.
@@ -57,7 +57,7 @@ def get_execution_plan(
 
     Parameters
     ----------
-    query : SQL
+    query : sql.SQL
         SQL query to explain.
     connection : Connection
         Active PostgreSQL connection.

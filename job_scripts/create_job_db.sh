@@ -17,6 +17,6 @@ if [ "$EXISTS" = "1" ]; then
 else
   echo "Creating database '$DB_NAME'..."
   docker exec "$CONTAINER_NAME" \
-    psql -U "$POSTGRES_USER" -d "$ADMIN_DB" -c "CREATE DATABASE $DB_NAME;"
+    psql -U "$POSTGRES_USER" -d "$ADMIN_DB" -c "CREATE DATABASE \"$DB_NAME\";"
   echo "Database '$DB_NAME' created."
 fi
