@@ -13,7 +13,25 @@ GAConfig
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    # Imported for type hints only.  The DQN class transitively requires
+    # onnxruntime, which we do not want to force on users of the LRU
+    # fitness path.  The string annotation below is resolved lazily.
+    from src.simulator.dqn_simulator import DQN
+
+
+FitnessType = Literal["lru", "dqn"]
+"""
+Types of supported fitness functions.
+
+- ``"lru"``: simulation of a clock-sweep (LRU-family) cache; the metric
+  is cache hit ratio.
+- ``"dqn"``: Deep Q-Network surrogate; the metric is the sum of the
+  Q-values output by the network.
+"""
 
 
 @dataclass
@@ -37,13 +55,23 @@ class GAConfig:
         Number of top individuals preserved unchanged across generations.
     cache_capacity_pages : int
         Clock-sweep cache capacity in 8 KB pages used for fitness evaluation.
+    all_tables : list[str]
+        Ordered list of table names referenced by any query in the
+        workload.  Required for DQN state encoding.
+    max_pages : dict[str, int]
+        Maximum page count observed per table across the workload.  Used
+        to normalise DQN state vectors.
+    fitness_type : FitnessType
+        Which fitness function the GA should use during evolution.
+    dqn : DQN | None
+        DQN surrogate evaluator.  Required when ``fitness_type == "dqn"``.
     seed : int | None
         Random seed for reproducibility.  None means non-deterministic.
     use_approximate_fitness : bool
-        When True and page-level data is available, use the precomputed
-        overlap matrix for fast approximate fitness during evolution.
-        The final best schedule is always validated with the exact
-        clock-sweep simulation.
+        When True and page-level data is available (and
+        ``fitness_type == "lru"``), use the precomputed overlap matrix
+        for fast approximate fitness during evolution.  The final best
+        schedule is always validated with the exact clock-sweep simulation.
     """
 
     population_size: int = 100
@@ -53,5 +81,9 @@ class GAConfig:
     tournament_size: int = 3
     elite_count: int = 2
     cache_capacity_pages: int = 1000
+    all_tables: list[str] = field(default_factory=list)
+    max_pages: dict[str, int] = field(default_factory=dict)
+    fitness_type: FitnessType = "lru"
+    dqn: "DQN | None" = None
     seed: int | None = None
     use_approximate_fitness: bool = False

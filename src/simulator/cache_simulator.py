@@ -138,6 +138,25 @@ class ClockSweepCache:
         """Number of pages currently held in the cache."""
         return self._used
 
+    def pages_held(self, table: str) -> int:
+        """
+        Return the number of pages of *table* currently cached.
+
+        Parameters
+        ----------
+        table : str
+            Name of the table to look up.
+
+        Returns
+        -------
+        int
+            Page count held for *table*, or 0 if the table is not cached.
+        """
+        idx = self._lookup.get(table)
+        if idx is None:
+            return 0
+        return self._pages[idx]
+
     def _advance_hand(self) -> None:
         """Advance the clock hand, wrapping around the buffer pool."""
         if self._tables:

@@ -250,6 +250,9 @@ def main(argv: list[str] | None = None) -> None:
 
     dqn = None
     if args.fitness == "dqn":
+        # Imported lazily so that the LRU path does not require
+        # onnxruntime to be installed.
+        from src.simulator.dqn_simulator import DQN
         dqn = DQN(
             onnx_path=args.onnx_path,
             all_tables=all_tables,

@@ -5,7 +5,6 @@ Workload loading utilities shared across scheduler and executor.
 from __future__ import annotations
 
 import re
-from typing import cast, LiteralString
 
 from psycopg import sql
 

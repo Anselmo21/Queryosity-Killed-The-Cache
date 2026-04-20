@@ -12,6 +12,8 @@ estimating the cumulative future cache hit rate achievable from that
 state.
 """
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
 from typing import cast
@@ -19,7 +21,7 @@ from typing import cast
 import onnxruntime as ort
 import numpy as np
 
-from src.simulator.cache_simulator import LRUCache
+from src.simulator.cache_simulator import ClockSweepCache
 from src.simulator.access_profile import AccessProfile
 from src.simulator.simulator_types import PageSet
 
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def build_state(
-    cache: LRUCache,
+    cache: ClockSweepCache,
     query_profile: AccessProfile,
     all_tables: list[str],
     max_pages: dict[str, int],
@@ -47,9 +49,9 @@ def build_state(
 
     Parameters
     ----------
-    cache : LRUCache
-        Current LRU cache state. Page counts are read from the internal
-        ``_entries`` ordered dict.
+    cache : ClockSweepCache
+        Current cache state.  Per-table page counts are read via
+        ``cache.pages_held(table)``.
     query_profile : AccessProfile
         Access profile for the candidate query, mapping table names to
         page counts.
@@ -67,7 +69,7 @@ def build_state(
     """
 
     buffer_vec = [
-        cache._entries.get(t, 0) / max_pages[t]
+        cache.pages_held(t) / max_pages[t]
         for t in sorted(all_tables)
     ]
     query_vec = [
@@ -121,7 +123,7 @@ def dqn_fitness(
     float
         Sum of Q-values across all scheduling steps. Higher is better.
     """
-    cache = LRUCache(cache_capacity_pages)
+    cache = ClockSweepCache(cache_capacity_pages)
     total_q = 0.0
 
     for idx in schedule:

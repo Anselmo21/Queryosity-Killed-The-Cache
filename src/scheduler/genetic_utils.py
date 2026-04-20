@@ -8,9 +8,13 @@ lazily cached fitness.
 
 Classes
 -------
+FitnessFunction
+    Protocol describing the callable interface every fitness evaluator
+    must implement.  Both the clock-sweep simulator and the DQN surrogate
+    conform to it, letting the GA swap evaluators via config.
 Individual
     A candidate query execution order with lazy cached fitness evaluated
-    via table-level LRU simulation.
+    via table-level clock-sweep simulation.
 IndividualWithPageSet
     Extends Individual to evaluate fitness using page-level simulation
     from pg_buffercache data.
@@ -33,7 +37,7 @@ from __future__ import annotations
 import copy
 import random
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Protocol
 
 from src.scheduler.genetic_config import GAConfig
 from src.simulator.access_profile import AccessProfile
@@ -42,7 +46,53 @@ from src.simulator.cache_simulator import (
     simulate_schedule,
     simulate_schedule_page_level,
 )
-def _fitness(
+from src.simulator.simulator_types import PageSet
+
+
+class FitnessFunction(Protocol):
+    """
+    Protocol defining the interface for query-schedule fitness functions.
+
+    Any callable conforming to this protocol can be used as a fitness
+    function in the genetic algorithm, allowing the simulation-based and
+    DQN-based evaluators to be used interchangeably.
+
+    Methods
+    -------
+    __call__(individual, profiles, cache_capacity_pages, page_sets)
+        Evaluate the fitness of a query schedule.
+    """
+
+    def __call__(
+        self,
+        individual: list[int],
+        profiles: list[AccessProfile],
+        cache_capacity_pages: int,
+        page_sets: list[PageSet] | None,
+    ) -> float:
+        """
+        Evaluate the fitness of a query schedule.
+
+        Parameters
+        ----------
+        individual : list[int]
+            Permutation of query indices representing the schedule to
+            evaluate.
+        profiles : list[AccessProfile]
+            Access profiles for all queries, indexed by query index.
+        cache_capacity_pages : int
+            Clock-sweep cache capacity in 8 KB pages.
+        page_sets : list[PageSet] or None
+            Optional precomputed page sets for each query.  Implementations
+            may use this for page-level granularity or ignore it.
+
+        Returns
+        -------
+        float
+            Fitness score of the schedule.  Higher is better.
+        """
+        ...
+def _fitness_cache_simulation(
     individual: list[int],
     profiles: list[AccessProfile],
     cache_capacity_pages: int,
@@ -194,6 +244,9 @@ class Individual:
         Random number generator instance used for mutation and crossover.
     _config : GAConfig
         Algorithm configuration, including mutation and crossover rates.
+    _fitness_fn : FitnessFunction
+        Callable used to score schedules.  Selected by ``make_individual``
+        based on ``config.fitness_type``.
     _fitness : float or None
         Cached fitness value.  None until first call to fitness().
     """
@@ -203,22 +256,23 @@ class Individual:
     cache_capacity_pages: int
     _rng: random.Random
     _config: GAConfig
+    _fitness_fn: FitnessFunction
     _fitness: Optional[float] = field(init=False, default=None)
 
     def fitness(self) -> float:
         """
-        Return the cache hit-ratio fitness of this individual.
+        Return the fitness of this individual.
 
-        Evaluates and caches the fitness on the first call using
-        table-level simulation.  Subsequent calls return the cached value.
+        Evaluates and caches the fitness on the first call via
+        ``self._fitness_fn``.  Subsequent calls return the cached value.
 
         Returns
         -------
         float
-            Cache hit ratio in the range [0.0, 1.0].
+            Fitness score produced by the configured fitness function.
         """
         if self._fitness is None:
-            self._fitness = _fitness(
+            self._fitness = self._fitness_fn(
                 self.schedule,
                 self.profiles,
                 self.cache_capacity_pages,
@@ -306,18 +360,19 @@ class IndividualWithPageSet(Individual):
 
     def fitness(self) -> float:
         """
-        Return the page-level cache hit-ratio fitness of this individual.
+        Return the page-level fitness of this individual.
 
-        Evaluates and caches the fitness on the first call using
-        page-level simulation.  Subsequent calls return the cached value.
+        Evaluates and caches the fitness on the first call via
+        ``self._fitness_fn``, forwarding ``self.page_sets`` for
+        implementations that make use of page-level data.
 
         Returns
         -------
         float
-            Cache hit ratio in the range [0.0, 1.0].
+            Fitness score produced by the configured fitness function.
         """
         if self._fitness is None:
-            self._fitness = _fitness(
+            self._fitness = self._fitness_fn(
                 self.schedule,
                 self.profiles,
                 self.cache_capacity_pages,
@@ -381,13 +436,16 @@ def make_individual(
     """
     Construct the appropriate Individual subtype for the configured fitness mode.
 
+    The fitness function is chosen from ``config.fitness_type``:
+    ``"lru"`` selects the clock-sweep simulator and ``"dqn"`` selects
+    the DQN surrogate (``config.dqn.infer``).
+
     Dispatch rules:
-    * When ``config.use_approximate_fitness`` is True and page-level data
-      (``page_sets``, ``overlap_matrix``, ``page_counts``) is provided,
-      returns an IndividualApproximate.
-    * Else, if ``page_sets`` is provided, returns an IndividualWithPageSet
-      using exact page-level simulation.
-    * Else, returns a plain Individual using exact table-level simulation.
+    * When ``config.use_approximate_fitness`` is True, ``fitness_type``
+      is ``"lru"``, and page-level data (``page_sets``, ``overlap_matrix``,
+      ``page_counts``) is provided, returns an ``IndividualApproximate``.
+    * Else, if ``page_sets`` is provided, returns an ``IndividualWithPageSet``.
+    * Else, returns a plain ``Individual``.
 
     Parameters
     ----------
@@ -396,7 +454,7 @@ def make_individual(
     profiles : list[AccessProfile]
         Access profiles for each query, indexed by query index.
     cache_capacity_pages : int
-        LRU cache capacity in 8 KB pages.
+        Clock-sweep cache capacity in 8 KB pages.
     rng : random.Random
         Random number generator instance.
     config : GAConfig
@@ -416,9 +474,27 @@ def make_individual(
     Individual
         IndividualApproximate, IndividualWithPageSet, or Individual as
         dictated by the dispatch rules above.
+
+    Raises
+    ------
+    ValueError
+        If ``config.fitness_type`` is not a recognised value.
+    AssertionError
+        If ``config.fitness_type`` is ``"dqn"`` but ``config.dqn`` is None.
     """
+    if config.fitness_type == "lru":
+        fitness_fn: FitnessFunction = _fitness_cache_simulation
+    elif config.fitness_type == "dqn":
+        assert config.dqn is not None, (
+            "DQN fitness was chosen but config.dqn is None"
+        )
+        fitness_fn = config.dqn.infer
+    else:
+        raise ValueError(f"Unknown fitness type: {config.fitness_type}")
+
     if (
-        config.use_approximate_fitness
+        config.fitness_type == "lru"
+        and config.use_approximate_fitness
         and page_sets is not None
         and overlap_matrix is not None
         and page_counts is not None
@@ -429,6 +505,7 @@ def make_individual(
             cache_capacity_pages=cache_capacity_pages,
             _rng=rng,
             _config=config,
+            _fitness_fn=fitness_fn,
             overlap_matrix=overlap_matrix,
             page_counts=page_counts,
         )
@@ -439,6 +516,7 @@ def make_individual(
             cache_capacity_pages=cache_capacity_pages,
             _rng=rng,
             _config=config,
+            _fitness_fn=fitness_fn,
             page_sets=page_sets,
         )
     return Individual(
@@ -447,6 +525,7 @@ def make_individual(
         cache_capacity_pages=cache_capacity_pages,
         _rng=rng,
         _config=config,
+        _fitness_fn=fitness_fn,
     )
 
 
@@ -483,10 +562,11 @@ def select_parents(
 
 
 __all__ = [
-    "_fitness",
+    "_fitness_cache_simulation",
     "_tournament_select",
     "_order_crossover",
     "_swap_mutation",
+    "FitnessFunction",
     "Individual",
     "IndividualWithPageSet",
     "IndividualApproximate",

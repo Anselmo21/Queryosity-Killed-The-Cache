@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import NamedTuple, Set
 
 
 class QueryPageCount(NamedTuple):
@@ -11,7 +11,7 @@ class QueryPageCount(NamedTuple):
     """The number of pages associated with the query."""
 
 
-type PageSet = set[QueryPageCount]
+PageSet = Set[QueryPageCount]
 """
 A set of query-page count pairs from a single pg_buffercache profiling
 sample.
