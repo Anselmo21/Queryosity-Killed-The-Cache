@@ -18,13 +18,15 @@ from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 import random
 import time
 
 logging.basicConfig(level=logging.WARNING)
 
 from src.postgres.connection import close_connection, create_connection
-from src.scheduler.genetic_algorithm import GAConfig, GAScheduler
+from src.scheduler.genetic_algorithm import GAScheduler
+from src.scheduler.genetic_config import FitnessType, GAConfig
 from src.simulator.access_profile import build_access_profiles_from_db
 from src.profiler.page_profiler import load_all_page_access
 from src.simulator.cache_simulator import (
@@ -85,6 +87,23 @@ def _print_schedule(
     return sim.hit_ratio
 
 
+class Args(argparse.Namespace):
+    workload: str
+    cache_pages: int
+    algorithm: str
+    generations: int
+    fitness: FitnessType
+    pop: int
+    seed: int | None
+    host: str
+    port: int
+    user: str
+    password: str
+    schema: str
+    timeout_ms: int
+    onnx_path: Path
+
+
 def main(argv: list[str] | None = None) -> None:
     """
     Parse arguments, build access profiles, and run the scheduler.
@@ -120,6 +139,18 @@ def main(argv: list[str] | None = None) -> None:
         help="Number of GA generations (default: 200)",
     )
     parser.add_argument(
+        "--fitness",
+        choices=["lru", "dqn"],
+        default="lru",
+        help="Fitness evaluation method (default: lru)",
+    )
+    parser.add_argument(
+        "--onnx-path",
+        type=Path,
+        default=Path(__file__).parent.parent.parent / "dqn.onnx",
+        help="Fitness evaluation method (default: ./dqn.onnx)",
+    )
+    parser.add_argument(
         "--pop",
         type=int,
         default=100,
@@ -143,7 +174,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--password", default=PG_PASSWORD)
     parser.add_argument("--schema", default=PG_SCHEMA)
     parser.add_argument("--timeout-ms", type=int, default=PG_STATEMENT_TIMEOUT_MS)
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv, namespace=Args())
 
     db_name = DB_DEFAULTS[args.workload]
 
@@ -211,12 +242,30 @@ def main(argv: list[str] | None = None) -> None:
         page_sets=page_sets,
     )
 
+    all_tables = sorted(list(set(t for p in profiles for t in p.table_pages)))
+    max_pages = {
+        t: max(p.table_pages.get(t, 0) for p in profiles)
+        for t in all_tables
+    }
+
+    dqn = None
+    if args.fitness == "dqn":
+        dqn = DQN(
+            onnx_path=args.onnx_path,
+            all_tables=all_tables,
+            max_pages=max_pages,
+        )
+
     # Build the scheduler based on --algorithm
     if args.algorithm == "ga":
         ga_config = GAConfig(
             population_size=args.pop,
             num_generations=args.generations,
             cache_capacity_pages=args.cache_pages,
+            all_tables=all_tables,
+            max_pages=max_pages,
+            fitness_type=args.fitness,
+            dqn=dqn,
             seed=args.seed,
             use_approximate_fitness=args.approximate,
         )
