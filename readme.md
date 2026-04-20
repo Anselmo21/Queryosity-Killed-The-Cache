@@ -1,319 +1,269 @@
 # "Queryosity Killed The Cache" Query Scheduler
 
-This repository contains the code and workloads used for the EECS 6414 (W2026) course project.
+This repository contains the code and workloads used for the EECS 6414 (W2026)
+course project. It implements a cache-aware query scheduler on top of
+PostgreSQL 16, using a genetic algorithm (GA) over a clock-sweep buffer-pool
+simulator to find query execution orders that maximize shared-buffer hit
+ratio. A DQN-based "SmartQueue" baseline is provided for comparison.
 
-# System Prerequisites 
+This README is a complete reproduction guide. Following it end-to-end will
+get you from a blank machine to trained models, optimized schedules,
+real-database execution numbers, and publication-ready plots.
 
-## 1. Install Docker
+---
 
-Docker is required to run the PostgreSQL database used by this project. 
+## Pipeline Overview
 
-Verify the installation:
+```
+           ┌──────────────────────┐
+           │  Docker + Postgres   │  (Section 1)
+           └─────────┬────────────┘
+                     │
+           ┌─────────▼────────────┐
+           │  Benchmark loaders   │  TPC-H · TPC-DS · JOB/IMDB
+           │  (tpch/tpcds/job)    │  (Section 2)
+           └─────────┬────────────┘
+                     │
+           ┌─────────▼────────────┐
+           │  Page profiler       │  pg_buffercache → CSV
+           │  (src.profiler)      │  (Section 3)
+           └─────────┬────────────┘
+                     │
+      ┌──────────────┴───────────────┐
+      │                              │
+┌─────▼──────────┐          ┌────────▼────────────┐
+│  GA scheduler  │          │  DQN (SmartQueue)   │
+│ (src.scheduler)│          │  ml/dqn.ipynb       │
+└─────┬──────────┘          └────────┬────────────┘
+      │                              │
+      └──────────────┬───────────────┘
+                     │
+           ┌─────────▼────────────┐
+           │  Executor (real PG)  │  EXPLAIN (ANALYZE, BUFFERS)
+           │  (src.executor)      │  (Section 6)
+           └─────────┬────────────┘
+                     │
+           ┌─────────▼────────────┐
+           │  Visualizations      │  (Section 7)
+           │  (src.visualization) │
+           └──────────────────────┘
+```
+
+---
+
+## 1. System Prerequisites
+
+### 1.1 Docker
+
+Docker is required for the PostgreSQL instance.
 
 ```bash
 docker --version
 docker compose version
 ```
 
-## 2. Launching PostgreSQL
+### 1.2 Launch PostgreSQL
 
-Start the PG container from the repository root
+From the repository root:
 
-```bash 
-docker compose up -d 
+```bash
+docker compose up -d
+docker ps   # should list a container named: query_scheduler_pg
 ```
 
-Verify the container is running 
+Defaults: `host=localhost`, `port=5432`, `user=postgres`, `password=postgres`.
 
-```bash 
-docker ps 
-```
+### 1.3 Python Environment
 
-If working properly, the expected container name will be **query_scheduler_pg** 
+This project targets Python 3.9+.
 
-## 3. Install Libraries 
-
-The list of packages required by the system is found within `requirements.txt`.
-
-To use this, first create and activate a virtual environment
-
-```bash 
+```bash
 python -m venv venv
 source venv/bin/activate
-```
-
-Once inside the virtual environment, install the libraries as follow
-
-```bash 
 pip install -r requirements.txt
 ```
 
-### Adding Dependencies
+For DQN training you will also need a working PyTorch install. CPU-only
+PyTorch is already in `requirements.txt`; for CUDA, follow the
+[official instructions](https://pytorch.org/get-started/locally/).
 
-When there is a need to add new libraries, please follow these steps for consistency purposes.
+### 1.4 Adding Dependencies
 
-1. Activate your virtual environment 
-2. Install the packages you need 
-
-```bash 
-pip install psycopg[binary] pandas networkx
-```
-3. Update the dependency list (or alternatively you can just overwrite the text file directly)
-
-```bash 
+```bash
+source venv/bin/activate
+pip install <package>
 pip freeze > requirements.txt
 ```
 
-4. Commit the updated requirements.txt
+Commit the updated `requirements.txt`.
 
-# Installing Benchmarks
+---
 
-**NOTE**: The instruction steps below were originally tested and conducted on the RHEL distribution. Some quirks may occur on other operating systems.
-There shouldn't be any need to modify the parameters of the scripts involved unless you want a different name for the output directory.
+## 2. Installing Benchmarks
 
-## TPC-H
+Three workloads are supported: **TPC-H**, **TPC-DS**, and **JOB** (the Join
+Order Benchmark on the IMDB dataset). Only the workloads you intend to use
+need to be loaded.
 
-### 1. Clone the TPC-H Generator
+> **NOTE:** Setup scripts were tested on RHEL. Other Linux distros should work;
+> macOS/Windows users may need to rebuild the TPC-DS binaries. Data
+> directories are expected **outside** the repo (e.g. `../tpch-data-sf10/`).
 
-Clone the TPC-H data generator:
+### 2.1 TPC-H
+
+#### Generate data
 
 ```bash
 git clone https://github.com/gregrahn/tpch-kit
 cd tpch-kit/dbgen
-```
-
-Compile the generator:
-
-```bash
 make
+./dbgen -s 10          # Scale Factor 10
 ```
 
-Follow the instructions in the repository. 
-The default configuration works for PostgreSQL.
-
-
-### 2. Generate the Benchmark Data
-
-Generate data with **Scale Factor 10** (or whichever you'd like):
+Move the generated `.tbl` files outside the repo:
 
 ```bash
-./dbgen -s 10
+mkdir ../../tpch-data-sf10
+mv *.tbl ../../tpch-data-sf10
 ```
 
-The scale factor controls the dataset size.
-
-This command generates the following `.tbl` files:
-
-```
-region.tbl
-nation.tbl
-supplier.tbl
-customer.tbl
-part.tbl
-partsupp.tbl
-orders.tbl
-lineitem.tbl
-```
-
-Create a directory **outside this repository** and move the files there:
-
-```bash
-mkdir ../tpch-data-sf10
-mv *.tbl ../tpch-data-sf10
-```
-
-Your directory structure should look like:
+Expected project layout:
 
 ```
 project-root/
-│
-├── this-repository/
-│
+├── Queryosity-Killed-The-Cache/
 └── tpch-data-sf10/
-    region.tbl
-    nation.tbl
-    supplier.tbl
-    customer.tbl
-    part.tbl
-    partsupp.tbl
-    orders.tbl
-    lineitem.tbl
+    region.tbl  nation.tbl  supplier.tbl  customer.tbl
+    part.tbl    partsupp.tbl  orders.tbl  lineitem.tbl
 ```
 
-### 3. Generate TPC-H Benchmark Queries
-
-The TPC-H toolkit also provides a query generator.
-
-Navigate to the generator directory:
-
-```bash
-cd tpch-kit/dbgen
-```
-
-Generate all 22 benchmark queries:
-
-**Note**: The queries are already stored in this repository under `workloads/tpch`. But, if you are interested to generate, with perhaps different parameters, the following below will work. 
-
-```bash
-for i in {1..22}
-do
-    ./qgen $i > query$i.sql
-done
-```
-
-### 4. Start PostgreSQL with Docker
-
-See instructions above
-
-### 5. Navigate to Setup Scripts
+#### Load into Postgres
 
 ```bash
 cd tpch_scripts
-```
-
-Make the scripts executable (if needed):
-
-```bash
 chmod +x *.sh
-```
-
-### 6. Configure Environment Variables
-
-These variables tell the scripts where the container and dataset are located.
-
-```bash
 export CONTAINER_NAME=query_scheduler_pg
 export POSTGRES_USER=postgres
 export DB_NAME=tpch
 export DATA_DIR=../../tpch-data-sf10
-```
-
-### 7. Run the Setup Script
-
-Run the full database initialization:
-
-```bash
 ./setup_tpch.sh
 ```
 
-This script performs the following pipeline:
-
-```
-create_tpch_db.sh
-        ↓
-tpch_schema.sql
-        ↓
-load_tpch_data.sh
-        ↓
-tpch_pkeys.sql
-        ↓
-tpch_fkeys.sql
-```
-
-This will:
-
-1. Create the `tpch` database
-2. Load the schema
-3. Import the TPC-H data
-4. Apply primary keys
-5. Apply foreign keys
-
-
-### 8. Verify the Installation
-
-Connect to PostgreSQL:
+#### Verify
 
 ```bash
-docker exec -it query_scheduler_pg psql -U postgres -d tpch
+docker exec -it query_scheduler_pg psql -U postgres -d tpch -c "SELECT COUNT(*) FROM lineitem;"
 ```
 
-List tables:
+At SF10 this should return ~60M rows.
 
-```sql
-\dt
-```
-
-Expected tables:
-
-```
-customer
-lineitem
-nation
-orders
-part
-partsupp
-region
-supplier
-```
-
-Verify data volume:
-
-```sql
-SELECT COUNT(*) FROM lineitem;
-```
-
-For **SF10**, the result should be approximately:
-
-```
-~60,000,000 rows
-```
-
-## TPC-DS
-
-### 1. Generate Data
-
-Navigate to the `tpcds_scripts` directory.
-
-If you are using **Linux**, the required executables are already included in the folder. Otherwise, clone the TPC-DS toolkit and build the generator for your system. 
+The 22 benchmark queries live in `workloads/tpch/`. If you need to regenerate
+them with different parameters:
 
 ```bash
-git clone https://github.com/gregrahn/tpcds-kit
-cd tpcds-kit/tools
-make
+cd tpch-kit/dbgen
+for i in {1..22}; do ./qgen $i > query$i.sql; done
 ```
 
-Follow the instructions in the repository to compile the executables for your platform.
+### 2.2 TPC-DS
 
-Data generation can be performed using the run_dsdgen_parallel.sh script. This script can spawn multiple children to speed up generation. Specify the desired scale factor and the output directory for the generated .dat files.
+Linux `dsdgen`/`dsqgen` binaries are pre-compiled in `tpcds_scripts/LINUX/`.
+For other platforms, build from [tpcds-kit](https://github.com/gregrahn/tpcds-kit).
 
-For consistency with the setup scripts, ensure your directory structure looks like this:
+#### Generate data
+
+From `tpcds_scripts/`, use the parallel generator:
+
+```bash
+cd tpcds_scripts
+./run_dsdgen_parallel.sh   # edit scale factor / output dir inside the script
+```
+
+Expected layout:
 
 ```
 project-root/
-│
-├── this-repository/
-│
+├── Queryosity-Killed-The-Cache/
 └── tpcds-data-sf10/
 ```
 
-### 2. Run the Setup Script 
-
-Execute the TPC-DS setup script
+#### Load into Postgres
 
 ```bash
-./setup_tpcds.sh 
+cd tpcds_scripts
+./setup_tpcds.sh
 ```
 
-This will perform the same steps as the TPC-H setup.
+This runs the same five-step pipeline as TPC-H (create DB → schema → load →
+indexes → ANALYZE).
 
-# Running the Scheduler and Executor
+### 2.3 JOB / IMDB
 
-The pipeline has two stages:
+The Join Order Benchmark runs against the IMDB dataset.
 
-1. **Scheduler** (`src.scheduler.run_scheduler`) — simulates query execution over a model LRU cache and uses a genetic algorithm to find the execution order that maximizes cache hit ratio.
-2. **Executor** (`src.executor.run_executor`) — executes queries against the real PostgreSQL instance using `EXPLAIN (ANALYZE, BUFFERS)` and reports actual shared buffer hit/read statistics.
+#### Get the data
 
-The typical workflow is: run the scheduler to produce an optimized order, then pass that order to the executor to measure real-world cache performance.
+Download the IMDB CSVs (the `imdb.tgz` archive published by the JOB authors)
+and extract to a directory outside the repo, e.g. `~/imdb-data/`.
+
+#### Load into Postgres
+
+```bash
+cd job_scripts
+chmod +x *.sh
+export CONTAINER_NAME=query_scheduler_pg
+export POSTGRES_USER=postgres
+export DB_NAME=imdb
+export DATA_DIR=/absolute/path/to/imdb-data
+./setup_job.sh
+```
+
+JOB queries live in `workloads/job/` (113 queries) and the workload is
+registered as `job` in `src/utilities/constants.py`, pointing at the `imdb`
+database. You can pass `--workload job` to the profiler and scheduler.
 
 ---
 
-## Scheduler
+## 3. Page-Level Profiling (prerequisite for page-level sim & DQN training)
 
-The genetic algorithm scheduler finds an execution order for a batch of queries that maximizes cache reuse under a simulated LRU buffer pool.
+The scheduler can run in two modes:
 
-### Quick Start
+- **Table-level** — uses estimated per-table page counts from `EXPLAIN`. No
+  profiling needed; the scheduler falls back to this if no page data is
+  present.
+- **Page-level** — uses the exact set of 8 KB pages each query touches,
+  captured via `pg_buffercache`. Produces much more accurate hit-ratio
+  estimates and is required for DQN training.
 
-Make sure the PostgreSQL container is running and the benchmark data is loaded (see above), then:
+### Run the profiler
+
+```bash
+source venv/bin/activate
+python -m src.profiler.run_profiler --workload tpch
+python -m src.profiler.run_profiler --workload tpcds
+```
+
+What happens:
+
+1. `pg_buffercache` extension is created if missing.
+2. For each query the Docker container is restarted (cold cache).
+3. The query is executed and `pg_buffercache` is dumped.
+4. A CSV of `(table, block)` pairs is written to `page_access/<workload>/`.
+
+This is **slow** — it re-runs every query from cold cache. For TPC-DS this
+can take hours. Do it once; results are reused by every downstream tool.
+
+After profiling, the scheduler automatically picks up `page_access/<workload>/`
+and switches to page-level simulation.
+
+---
+
+## 4. GA Scheduler
+
+`src.scheduler.run_scheduler` runs a genetic algorithm over a clock-sweep
+buffer-pool simulator to find a query order that maximizes cache hit ratio.
+
+### Quick start
 
 ```bash
 source venv/bin/activate
@@ -324,52 +274,63 @@ python -m src.scheduler.run_scheduler --workload tpch
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--workload` | `tpch` | Query workload: `tpch`, `tpcds` (modified subset), or `tpcds_full` |
-| `--cache-pages` | `1000` | Simulated LRU cache capacity in 8 KB pages |
-| `--algorithm` | `ga` | Scheduling algorithm (`ga` = genetic algorithm) |
-| `--generations` | `200` | Number of GA generations |
+| `--workload` | `tpch` | `tpch`, `tpcds`, or `job` (must be a key in `WORKLOAD_DIRS`) |
+| `--cache-pages` | `1000` | Simulated buffer-pool size in 8 KB pages |
+| `--algorithm` | `ga` | Scheduling algorithm (`ga` is the only option today) |
+| `--generations` | `200` | GA generations |
 | `--pop` | `100` | GA population size |
-| `--seed` | None | Random seed for reproducibility |
+| `--seed` | `None` | Random seed for reproducibility |
+| `--fitness` | `lru` | `lru` (cache simulation) or `dqn` (ONNX surrogate) |
+| `--onnx-path` | `./dqn.onnx` | Path to exported DQN model (for `--fitness dqn`) |
+| `--approximate` | off | Use fast overlap-matrix fitness during GA; exact sim for final result |
 
-PostgreSQL connection settings are read from `src/utilities/configurations.py` and can be overridden with `--host`, `--port`, `--user`, `--password`, `--schema`, and `--timeout-ms`.
+Postgres connection overrides: `--host --port --user --password --schema --timeout-ms`.
 
 ### Examples
 
 ```bash
-# TPC-H with a smaller cache (forces more eviction, more room to optimize)
+# Smaller cache → more eviction pressure → more room for the scheduler to help
 python -m src.scheduler.run_scheduler --workload tpch --cache-pages 500
 
-# TPC-DS modified queries with more generations and a fixed seed
+# Larger GA run with a fixed seed
 python -m src.scheduler.run_scheduler --workload tpcds --generations 300 --pop 150 --seed 42
 
-# Full TPC-DS workload (99 queries)
-python -m src.scheduler.run_scheduler --workload tpcds_full --cache-pages 2000
+# Fast approximate fitness during evolution (final score still uses exact sim)
+python -m src.scheduler.run_scheduler --workload tpch --approximate
+
+# DQN surrogate fitness (requires an ONNX model — see §8)
+python -m src.scheduler.run_scheduler --workload tpch --fitness dqn --onnx-path ./dqn.onnx
 ```
 
 ### Output
 
 The script prints:
 
-1. **Baseline** — simulated cache hit ratio for the default (file) order
-2. **GA progress** — best fitness every 50 generations
-3. **Best schedule** — the optimized query order and its simulated hit ratio
-4. **Improvement** — change in cache hit ratio (percentage points) over the baseline
+1. **Baseline** — hit ratio for a random query order.
+2. **GA progress** — best fitness every 50 generations.
+3. **Best schedule** — the GA-optimized order and its simulated hit ratio.
+4. **Improvement** — delta in percentage points over the baseline.
+
+It also writes JSON artefacts to `viz_data/` that the visualization module
+consumes (fitness history, profiles, schedules, metadata).
 
 ---
 
-## Executor
+## 5. Executor (real-database measurement)
 
-The executor runs queries against the real PostgreSQL instance and reports actual shared buffer statistics. Use it to validate whether the scheduler's predicted ordering improves real cache performance.
+The scheduler uses a *model* of the cache. The executor runs queries against
+the actual Postgres instance with `EXPLAIN (ANALYZE, BUFFERS)` and reports
+real shared-buffer hits and reads.
 
-### Quick Start
+### Quick start
 
 ```bash
 source venv/bin/activate
 
-# Run in default order
+# Run in default file order
 python -m src.executor.run_executor --workload tpch
 
-# Run in a scheduler-optimized order (copy the order from scheduler output)
+# Run a scheduler-optimized order
 python -m src.executor.run_executor --workload tpch --order q5,q12,q1,q3,...
 ```
 
@@ -377,44 +338,187 @@ python -m src.executor.run_executor --workload tpch --order q5,q12,q1,q3,...
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--workload` | `tpch` | Query workload: `tpch`, `tpcds`, or `tpcds_full` |
-| `--order` | None | Comma-separated query IDs (e.g. `q5,q3,q1`). Omit to use default file order |
-| `--compare-baseline` | off | Also execute in default order and print a side-by-side comparison |
-| `--container` | `query_scheduler_pg` | Docker container name used for cache flushing |
+| `--workload` | `tpch` | `tpch`, `tpcds`, or `job` |
+| `--order` | `None` | Comma-separated query IDs. Omit for file order. |
+| `--compare-baseline` | off | Execute both orders and print a side-by-side comparison |
+| `--container` | `query_scheduler_pg` | Docker container (used to flush cache) |
 
-PostgreSQL connection settings are read from `src/utilities/configurations.py` and can be overridden with `--host`, `--port`, `--user`, `--password`, `--schema`, and `--timeout-ms`.
+Postgres connection overrides as above.
 
-### Examples
+### Example
 
 ```bash
-# Compare default vs. optimized order
 python -m src.executor.run_executor \
   --workload tpch \
   --order q5,q12,q1,q3,q14,q6 \
   --compare-baseline
-
-# Run TPC-DS optimized order
-python -m src.executor.run_executor --workload tpcds --order q17,q42,q7,...
 ```
 
-### Output
+With `--compare-baseline`, two JSON result files land in `viz_data/` for
+plotting (`baseline_results_<workload>.json`, `ga_results_<workload>.json`).
 
-The script prints a per-query table showing execution time, shared buffer hits, reads, and hit ratio, followed by totals. When `--compare-baseline` is used, it also prints the improvement in hit ratio and total execution time.
+---
 
+## 6. Visualizations
+
+After running the scheduler and (optionally) the executor:
+
+```bash
+# Scheduler plots: fitness curve, page overlap matrix, cache sensitivity
+python -m src.visualization.run_visualizations --workload tpch
+
+# Executor plots: per-query hit ratio, cumulative I/O
+python -m src.visualization.run_visualizations --workload tpch --executor
+
+# Both
+python -m src.visualization.run_visualizations --workload tpch --executor --scheduler
 ```
-  Query           Time (ms)       Hits      Reads    Hit %
-  ───────────────────────────────────────────────────────
-  q1               1234.5      50,000     10,000   83.33%
-  ...
-  ───────────────────────────────────────────────────────
-  TOTAL            9876.5     400,000     80,000   83.33%
+
+PNGs are written to `plots/`. Inputs come from the JSON files in `viz_data/`
+produced by the scheduler and executor runs, so those must be run first.
+
+---
+
+## 7. SmartQueue / DQN Baseline
+
+The `ml/` directory contains the Deep-Q-Network baseline used as a
+comparison point against the GA scheduler. The training workflow is a
+Jupytext-paired notebook: edit `ml/dqn.notebook.py`, open `ml/dqn.ipynb` in
+Jupyter, or run the paired `.py` cells directly.
+
+### 7.1 Prerequisites
+
+- Python environment from §1.3 (PyTorch required — CUDA recommended).
+- Page access CSVs for the target benchmark. Run §3 first:
+  ```bash
+  python -m src.profiler.run_profiler --workload tpch
+  ```
+
+### 7.2 Training
+
+Launch Jupyter from the repository root:
+
+```bash
+source venv/bin/activate
+jupyter lab     # or: jupyter notebook
+```
+
+Open `ml/dqn.ipynb` and run all cells. The first four cells prompt for:
+
+| Prompt | Example | Meaning |
+|--------|---------|---------|
+| `Name` | `tpch-sf10` | Used to name the saved checkpoint `<Name>.pt` |
+| `Benchmark` | `tpch` | Subdirectory of `page_access/` to read CSVs from (`tpch`, `tpcds`, `job`) |
+| `Cache capacity in 8kb pages` | `1000` | Must match the cache size you will evaluate against |
+| `Number of episodes` | `500` | DQN training episodes |
+
+The notebook:
+
+1. Reads `page_access/<benchmark>/q{1..22}.csv`.
+2. Builds per-query page sets and a per-table block-count index.
+3. Trains the DQN via `DQNTrainer.train(...)` (ε-greedy, target net, replay).
+4. Saves the checkpoint to `ml/<Name>.pt`.
+5. Plots training loss curves.
+6. Runs a greedy scheduling loop: at each step, pick the query with the
+   highest Q-value given the current cache state; simulate; repeat.
+7. Prints the resulting schedule and average hit rate.
+
+### 7.3 Reproducing the SmartQueue baseline numbers
+
+1. Load and profile TPC-H at SF10 (§2.1, §3).
+2. Open `ml/dqn.ipynb`.
+3. Inputs: `Name=tpch-sf10-1000`, `Benchmark=tpch`, `Cache=1000`, `Episodes=500`.
+4. Run all cells.
+5. Record the final schedule and average hit rate printed by the last cell.
+6. Compare against the GA result from §4 at the same cache capacity.
+
+Repeat for TPC-DS and JOB by changing the `Benchmark` prompt (and adjusting
+the `range(1, 23)` loop in the notebook if your workload has a different
+query count).
+
+### 7.4 Limitations / known gaps
+
+- The notebook currently hard-codes the query range `range(1, 23)` (TPC-H's
+  22 queries). For TPC-DS or JOB, edit that range to match the number of
+  `q{N}.csv` files in `page_access/<benchmark>/`.
+- The notebook saves a PyTorch `.pt` checkpoint only. The
+  `--fitness dqn` path in `src.scheduler.run_scheduler` expects an **ONNX**
+  file and uses a different (table-level) state encoding than the notebook's
+  (page-level) encoding. Exporting the notebook's model to ONNX therefore
+  will **not** plug directly into the GA scheduler — the DQN hook in the GA
+  is experimental scaffolding, not a finished integration. Use the
+  notebook's own scheduling loop to obtain SmartQueue baseline numbers.
+
+---
+
+## 8. Running the Full Pipeline (end-to-end example)
+
+For a fresh checkout targeting TPC-H at SF10:
+
+```bash
+# 1. Infrastructure
+docker compose up -d
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Benchmark data
+cd tpch_scripts
+export CONTAINER_NAME=query_scheduler_pg POSTGRES_USER=postgres \
+       DB_NAME=tpch DATA_DIR=../../tpch-data-sf10
+./setup_tpch.sh
+cd ..
+
+# 3. Page profiling (slow — do once)
+python -m src.profiler.run_profiler --workload tpch
+
+# 4. GA scheduler
+python -m src.scheduler.run_scheduler --workload tpch --cache-pages 1000 --seed 42
+
+# 5. Executor — measure on real Postgres
+python -m src.executor.run_executor --workload tpch \
+       --order <paste-ga-order-here> --compare-baseline
+
+# 6. Plots
+python -m src.visualization.run_visualizations --workload tpch --executor --scheduler
+
+# 7. SmartQueue baseline (notebook)
+jupyter lab ml/dqn.ipynb
 ```
 
 ---
 
-## Running Tests
+## 9. Running Tests
 
 ```bash
 source venv/bin/activate
 python -m pytest tests/ -v
+```
+
+---
+
+## 10. Repository Layout
+
+```
+src/
+├── postgres/        connection & execute helpers
+├── scheduler/       GA scheduler (run_scheduler, genetic_algorithm, …)
+├── executor/        real-DB executor (run_executor)
+├── profiler/        pg_buffercache page-access profiler
+├── simulator/       clock-sweep cache simulator + DQN inference wrapper
+├── utilities/       constants, configuration, workload loader
+└── visualization/   plotting entry point + individual plot modules
+ml/
+├── dqn.ipynb        SmartQueue training notebook (paired via jupytext)
+├── dqn.notebook.py  editable .py view of the notebook
+└── dqntrainer.py    DQN architecture and training loop
+workloads/
+├── tpch/            22 TPC-H queries
+└── tpcds/           adapted TPC-DS query subset
+tpch_scripts/        TPC-H DB setup (schema, load, PK/FK)
+tpcds_scripts/       TPC-DS DB setup (+ pre-built Linux dsdgen/dsqgen)
+job_scripts/         JOB/IMDB DB setup
+tests/               pytest suite
+page_access/         (generated) pg_buffercache profiler output
+viz_data/            (generated) scheduler/executor JSON artefacts
+plots/               (generated) PNG output from visualizations
 ```
