@@ -11,7 +11,9 @@ For exact reproducibility with my Python 3.13 environment, see [environment-full
 
 Both [dqn.ipynb](./dqn.ipynb) and [dqn.notebook.py](./dqn.notebook.py) contain code for training the DQN, saving the PyTorch model, and generating a schedule from it. You need to specify:
 - a name for the model,
-- the cache capacity (in 8kb pages).
+- the benchmark being run (TPCH, TPCDS, or JOB),
+- the cache capacity (in 8kb pages), and
+- the number of training episodes.
 
 Both the `.ipynb` and `.py` have the same content, just reproduced for preference of notebook vs script.
 

@@ -38,6 +38,10 @@ print(
 NAME = input('Name: ')
 
 # %%
+print('Which benchmark are you using?')
+BENCHMARK = input('Benchmark (tpch, tpcds, job): ')
+
+# %%
 print('We also need the capacity of the cache so was can simulate it.')
 CACHE_CAPACITY_PAGES = int(input('Cache capacity in 8kb pages: '))
 
@@ -62,7 +66,7 @@ rng = random.Random()
 # %%
 dfs: list[pd.DataFrame] = []
 for i in range(1, 23):
-    df = pd.read_csv(f'../page_access/tpch/q{i}.csv')
+    df = pd.read_csv(f'../page_access/{BENCHMARK}/q{i}.csv')
     df['query'] = i
     dfs.append(df)
 df = pd.concat(dfs, ignore_index=True)
