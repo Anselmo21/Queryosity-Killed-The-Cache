@@ -307,6 +307,7 @@ class DQNTrainer:
             # =================================================================
             cache = PageClockSweepCache(cache_capacity_pages)
             remaining_queries = deepcopy(queries)
+            random.shuffle(remaining_queries)
             state_counter = 0
             episode_reward = 0.0
             episode_losses = []
