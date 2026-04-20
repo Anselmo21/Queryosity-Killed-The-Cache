@@ -2,7 +2,8 @@ import dataclasses
 import functools
 import random
 import sys
-from typing import Collection
+from typing import Collection, TypeVar, Union
+from typing_extensions import TypeAlias
 
 import numpy as np
 import torch
@@ -17,7 +18,10 @@ from collections import defaultdict
 from copy import deepcopy
 
 
-def invert[K, V](d: dict[K, V]) -> dict[V, K]:
+K = TypeVar('K')
+V = TypeVar('V')
+
+def invert(d: dict[K, V]) -> dict[V, K]:
     '''
     Inverts a mapping d, raising an exception if more than 1 key maps to the
     same value.
@@ -30,13 +34,13 @@ def invert[K, V](d: dict[K, V]) -> dict[V, K]:
     return inv
 
 
-type Query = int
+Query: TypeAlias = int
 '''Query represented by a integer query ID.'''
 
-type State = tuple[PageClockSweepCache, list[Query]]
+State: TypeAlias = tuple[PageClockSweepCache, list[Query]]
 '''State represented by a cache and a list of remaining queries.'''
 
-type Action = Query
+Action: TypeAlias = Query
 '''Action represented by a query chosen from the remaining queries.'''
 
 
@@ -266,11 +270,11 @@ class DQNTrainer:
     def train(
         self,
         update_steps: int,
-        epsilon_schedule: Collection[float] | Tensor,
+        epsilon_schedule: Union[Collection[float], Tensor],
         gamma: float,
         tau: float,
         history_size: int,
-        mini_batch_size: int | None,
+        mini_batch_size: Union[int, None],
         cache_capacity_pages: int,
         device: torch.device,
     ) -> tuple[DQN, TrainingLog]:

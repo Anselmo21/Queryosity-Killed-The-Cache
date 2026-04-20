@@ -177,7 +177,7 @@ while len(remaining_queries) > 0:
 # %%
 print('SCHEDULE')
 print([f'q{query_id}' for query_id in schedule])
-print(f'\n{'Query ID':<12} {'Q-Value':<12} {'Hit Rate':<12}')
+print(f"\n{'Query ID':<12} {'Q-Value':<12} {'Hit Rate':<12}")
 print("-" * 36)
 for query_id, q_value, hit_rate in zip(schedule, best_q_value_history, hit_rate_history):
     print(f'{query_id:<12} {q_value:<12.4f} {hit_rate:<12.4f}')
